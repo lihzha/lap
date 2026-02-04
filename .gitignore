@@ -1,0 +1,14 @@
+.venv/
+wandb/
+__pycache__/
+*.mp4
+.vscode/
+uv.lock
+checkpoints/
+.claude
+*.png
+videos/
+*.log
+*.npz
+logs/
+data/
