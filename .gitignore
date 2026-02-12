@@ -1,7 +1,7 @@
 .venv/
 wandb/
 __pycache__/
-*.mp4
+# *.mp4
 .vscode/
 uv.lock
 checkpoints/
