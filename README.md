@@ -113,3 +113,19 @@ JAX_PLATFORMS=cuda uv run --group cuda scripts/train.py lap --exp-name=lap_custo
 ## Acknowledgment
 
 This repository is built on [OpenPI](https://github.com/Physical-Intelligence/openpi).
+
+## Citation
+
+If this codebase helps your research, please cite:
+
+```console
+@misc{zha2026laplanguageactionpretrainingenables,
+      title={LAP: Language-Action Pre-Training Enables Zero-shot Cross-Embodiment Transfer}, 
+      author={Lihan Zha and Asher J. Hancock and Mingtong Zhang and Tenny Yin and Yixuan Huang and Dhruv Shah and Allen Z. Ren and Anirudha Majumdar},
+      year={2026},
+      eprint={2602.10556},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2602.10556}, 
+}
+```
