@@ -1,9 +1,9 @@
 # LAP: Language-Action Pre-Training Enables Zero-Shot Cross-Embodiment Transfer
 
-## [<a href="https://lap-vla.github.io/" target="_blank">Website</a>] [<a href="https://arxiv.org/abs/2602.10556" target="_blank">Paper</a>] [<a href="https://huggingface.co/collections/lihzha/lap" target="_blank">Checkpoints</a>]
+### [<a href="https://lap-vla.github.io/" target="_blank">Website</a>] [<a href="https://arxiv.org/abs/2602.10556" target="_blank">Paper</a>] [<a href="https://huggingface.co/collections/lihzha/lap" target="_blank">Checkpoints</a>]
 
 <p align="center">
-  <video src="assets/teaser.mp4" width="600" autoplay loop muted playsinline>
+  <video src="assets/teaser.mp4" width="600" controls autoplay loop muted playsinline>
     Your browser does not support the video tag.
   </video>
 </p>
