@@ -101,8 +101,6 @@ def eval_libero(args: Args) -> None:
     else:
         raise ValueError(f"Unknown task suite: {args.task_suite_name}")
 
-    # max_steps = 50
-
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
 
     # Start evaluation
@@ -166,16 +164,10 @@ def eval_libero(args: Args) -> None:
                         action_plan.extend(action_chunk[: args.replan_steps])
 
                     # Save preprocessed image for replay video
-                    # Draw reasoning on image if available
-                    # if "reasoning" in response and response["reasoning"] is not None:
-                    #     img_with_text = _draw_text_on_image(img, response["reasoning"])
-                    #     replay_images.append(img_with_text)
-                    # else:
                     replay_images.append(img)
                     wrist_replay_images.append(wrist_img)
 
                     action = action_plan.popleft()
-                    # action = np.concatenate([action[:3], _euler2axisangle(action[3:6]), action[6:]])
 
                     # Execute action in environment
                     obs, _, done, _ = env.step(action.tolist())
@@ -280,8 +272,8 @@ def _get_libero_env(task, resolution, seed, controller="OSC_POSE"):
 
 def get_images_from_obs(obs, resize_size):
     # IMPORTANT: rotate 180 degrees to match train preprocessing
-    img = np.ascontiguousarray(obs["agentview_image"][:, ::-1])
-    wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][:, ::-1])
+    img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
+    wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
     img = image_tools.convert_to_uint8(image_tools.resize_with_pad(img, resize_size, resize_size))
     wrist_img = image_tools.convert_to_uint8(image_tools.resize_with_pad(wrist_img, resize_size, resize_size))
 
@@ -290,7 +282,7 @@ def get_images_from_obs(obs, resize_size):
 
 def obs_to_request(obs, policy_type: PolicyType, img, wrist_img, task_description: str):
     # Prepare observations dict
-    assert policy_type in (PolicyType.LAP_AR, PolicyType.LAP_AR), f"Unsupported policy type: {policy_type}"
+    assert policy_type in (PolicyType.LAP, PolicyType.LAP_AR), f"Unsupported policy type: {policy_type}"
     eef_pos = np.asarray(obs["robot0_eef_pos"], dtype=np.float32)
     eef_rot6d = _quat2rot6d(obs["robot0_eef_quat"]).astype(np.float32, copy=False)
     gripper_qpos = np.asarray(obs["robot0_gripper_qpos"], dtype=np.float32)

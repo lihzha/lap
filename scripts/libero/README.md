@@ -28,7 +28,8 @@ uv pip install -e third_party/openpi/third_party/libero
 
 ```bash
 # in one terminal, run the server
-JAX_PLATFORMS=cuda uv run --group cuda --active scripts/serve_policy.py policy:checkpoint --policy.config=lap_libero --policy.dir=$EPOCH_DIR --policy.type=raw
+export OPENPI_DATA_HOME=~/.cache/openpi
+JAX_PLATFORMS=cuda uv run --group cuda --active scripts/serve_policy.py policy:checkpoint --policy.config=lap_libero --policy.dir=$EPOCH_DIR --policy.type=flow
 
 
 # in another terminal, run the sim
