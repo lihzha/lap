@@ -783,6 +783,40 @@ _CONFIGS = [
         ema_schedule_choice=EmaScheduleChoice(kind="constant"),
     ),
     TrainConfig(
+        name="lap_droid",
+        model=lap_config.LAPConfig(
+            action_dim=7,
+            action_horizon=16,
+            max_token_len=180,
+            enable_action_training=True,
+            stop_action_to_vlm_grad=True,
+            language_loss_weight=1.0,
+            enable_image_augmentation=True,
+        ),
+        data=RLDSDataConfig(
+            shuffle_buffer_size=1000000,
+            repo_id="droid",
+            asset_id="droid",
+            data_mix="droid",
+            val_fraction=0.0,
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1000,
+            peak_lr=5e-5,
+            decay_steps=40_000,
+            decay_lr=5e-5,
+        ),
+        weight_loader=weight_loaders.WeightLoaderChoice(
+            kind="checkpoint",
+            params_path="checkpoints/lap/params",
+        ),
+        save_interval=5000,
+        keep_period=5000,
+        num_train_steps=40_001,
+        batch_size=512,
+        ema_schedule_choice=EmaScheduleChoice(kind="constant"),
+    ),
+    TrainConfig(
         name="lap_cotrain",
         model=lap_config.LAPConfig(
             action_dim=7,
