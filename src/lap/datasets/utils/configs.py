@@ -297,7 +297,7 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
     },
-    "maniskill_plug_charger": {
+    "maniskill_dataset": {
         "image_obs_keys": {
             "primary": "image",
             "secondary": None,
@@ -532,7 +532,7 @@ OXE_DATASET_METADATA = {
         "robot_morphology": "Single Arm",
         "has_suboptimal": "No",
     },
-    "maniskill_plug_charger": {
+    "maniskill_dataset": {
         "control_frequency": 15,
         "language_annotations": "Natual detailed instructions",
         "robot_morphology": "Single Arm",

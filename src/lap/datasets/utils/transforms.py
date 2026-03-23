@@ -1768,5 +1768,5 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "yam_demo_dataset": yam_dataset_transform,
     "franka_rollout_dataset": franka_dataset_transform,
     "yam_rollout_dataset": yam_dataset_transform,
-    "maniskill_plug_charger": maniskill_dataset_transform,
+    "maniskill_dataset": maniskill_dataset_transform,
 }
