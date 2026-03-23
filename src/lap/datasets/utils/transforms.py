@@ -790,11 +790,6 @@ def droid_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
     return trajectory
 
 
-def maniskill_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
-    trajectory["observation"]["gripper_state"] = trajectory["observation"]["state"][..., 7:8]
-    return trajectory
-
-
 def furniture_bench_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
     import tensorflow_graphics.geometry.transformation as tft
 
@@ -1482,7 +1477,10 @@ def libero_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
 
 def maniskill_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
 
-    trajectory["language_action"] = trajectory["action"]
+    gripper_action = trajectory["action"][:, -1:]
+
+    padded_movement_actions = compute_padded_movement_actions(trajectory["observation"]["state"][:, :6])
+    trajectory["language_action"] = tf.concat([padded_movement_actions, gripper_action], axis=1)
 
     return trajectory
 
@@ -1688,7 +1686,6 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "stanford_hydra_dataset_converted_externally_to_rlds": stanford_hydra_dataset_transform,
     "austin_buds_dataset_converted_externally_to_rlds": austin_buds_dataset_transform,
     "nyu_franka_play_dataset_converted_externally_to_rlds": nyu_franka_play_dataset_transform,
-    "maniskill_dataset_converted_externally_to_rlds": maniskill_dataset_transform,
     "furniture_bench_dataset_converted_externally_to_rlds": furniture_bench_dataset_transform,
     "cmu_franka_exploration_dataset_converted_externally_to_rlds": cmu_franka_exploration_dataset_transform,
     "ucsd_kitchen_dataset_converted_externally_to_rlds": ucsd_kitchen_dataset_transform,
