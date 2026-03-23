@@ -318,14 +318,13 @@ EMBODIMENT_IDENTIFICATION_PROMPT_FORMAT = PromptFormat(
 RAW_NUMERIC_PROMPT_FORMAT = PromptFormat(
     name="raw_numeric",
     prefix_module=PrefixModule(
-        "Output the robot's next action as 7 space-separated signed integers: "
-        "dx dy dz droll dpitch dyaw gripper. "
-        "dx/dy/dz: end-effector translation in cm (positive = forward / left / up). "
-        "droll/dpitch/dyaw: wrist rotation in degrees. "
-        "gripper: 0=close, 1=open."
+        "Schema: dx dy dz droll dpitch dyaw gripper; "
+        "dx/dy/dz = translation in cm (+forward/-backward, +left/-right, +up/-down), "
+        "droll/dpitch/dyaw = wrist rotation in degrees (+left/-right, +back/-forward, +ccw/-cw), "
+        "gripper: 0=close 1=open"
     ),
     task_module=TaskModule(
-        template="Task: {prompt}, in the {frame_description}",
+        template="Task: {prompt}, predict the robot's action in the {frame_description}",
         include_time_horizon=False,
     ),
     state_module=StateModule(
@@ -333,8 +332,8 @@ RAW_NUMERIC_PROMPT_FORMAT = PromptFormat(
         state_prefix_template="State{state_label}: {state}",
         include_state_type=False,
     ),
-    action_module=ActionModule(prefix=""),
-    separator="\n",
+    action_module=ActionModule(prefix="Answer: "),
+    separator="; ",
     critical_token_checker=checkers.is_number,
     direction_token_checker=checkers.is_direction_none,
 )
