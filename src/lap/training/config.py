@@ -750,7 +750,7 @@ _CONFIGS = [
             shuffle_buffer_size=100000,
             repo_id="maniskill",
             asset_id="maniskill",
-            data_mix="maniskill_plug_charger",
+            data_mix="maniskill_dataset",
             val_fraction=0.0,
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
