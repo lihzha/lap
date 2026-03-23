@@ -288,6 +288,10 @@ def visualize_openvla_bins(
         for dim_i, raw_tok_id in enumerate(action_tok_ids[:7]):
             tok_id = int(raw_tok_id)
             bin_idx = tok_id - token_offset
+            # Clamp to valid range — out-of-range values mean the token is not
+            # an action token (e.g. a regular language token leaked through the
+            # langact_mask) and will be saturated at bin 0 / bin 255.
+            bin_idx = int(np.clip(bin_idx, 0, num_bins - 1))
             dim_name = _OPENVLA_DIM_NAMES[dim_i] if dim_i < len(_OPENVLA_DIM_NAMES) else f"dim{dim_i}"
 
             if dim_i == 6:  # gripper

@@ -37,6 +37,7 @@ GEMMA3_NEWLINE_TOKEN = 108  # \n
 PromptFormatLiteral: TypeAlias = Literal[
     "lap",
     "vla0_chunked",
+    "raw_numeric",
 ]
 PredictionFormatLiteral: TypeAlias = Literal["default", "grouped"]
 

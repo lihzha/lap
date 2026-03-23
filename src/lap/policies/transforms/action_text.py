@@ -58,6 +58,9 @@ def summarize_numeric_actions(
     if sum_decimal == "compact":
         return _summarize_compact_numeric_actions(arr, include_rotation)
 
+    if sum_decimal == "raw_numeric":
+        return summarize_raw_numeric_actions(arr, include_rotation)
+
     if sum_decimal in {"no_number", "nearest_10"}:
         decimals = 0
     else:
@@ -141,6 +144,37 @@ def summarize_numeric_actions(
     else:
         parts.append("close gripper")
     return ", ".join(parts)
+
+
+def summarize_raw_numeric_actions(arr_like, include_rotation: bool = True) -> str | None:
+    """Summarize actions as space-separated signed integers without labels.
+
+    Example output: "+5 -3 -1 +15 +23 +35 0"
+    Dimensions: dx_cm dy_cm dz_cm [droll_deg dpitch_deg dyaw_deg] gripper
+
+    Translation and rotation are rounded to the nearest integer.
+    Gripper is 0 (close) or 1 (open) with no sign prefix.
+    """
+    arr = np.asarray(arr_like, dtype=float)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.shape[-1] < 7:
+        return None
+
+    dx_cm = int(round(float(arr[..., 0].sum()) * 100.0))
+    dy_cm = int(round(float(arr[..., 1].sum()) * 100.0))
+    dz_cm = int(round(float(arr[..., 2].sum()) * 100.0))
+    parts = [f"{dx_cm:+d}", f"{dy_cm:+d}", f"{dz_cm:+d}"]
+
+    if include_rotation:
+        droll_deg = int(round(float(arr[..., 3].sum()) * 180.0 / np.pi))
+        dpitch_deg = int(round(float(arr[..., 4].sum()) * 180.0 / np.pi))
+        dyaw_deg = int(round(float(arr[..., 5].sum()) * 180.0 / np.pi))
+        parts.extend([f"{droll_deg:+d}", f"{dpitch_deg:+d}", f"{dyaw_deg:+d}"])
+
+    gripper = 1 if float(arr[-1, 6]) >= 0.5 else 0
+    parts.append(str(gripper))
+    return " ".join(parts)
 
 
 def describe_language_action_scale(language_action: str) -> str | None:
@@ -239,6 +273,19 @@ def is_idle_language_action(
             translation_l2 = np.sqrt(dx_cm**2 + dy_cm**2 + dz_cm**2)
             return translation_l2 < translation_threshold
         return True
+
+    if sum_decimal == "raw_numeric":
+        try:
+            vals = [int(v) for v in language_action.split()]
+        except ValueError:
+            return True
+        if len(vals) < 3:
+            return True
+        translation_l2 = np.sqrt(vals[0] ** 2 + vals[1] ** 2 + vals[2] ** 2)
+        if not include_rotation or len(vals) < 7:
+            return translation_l2 < translation_threshold
+        rotation_l2 = np.sqrt(vals[3] ** 2 + vals[4] ** 2 + vals[5] ** 2)
+        return translation_l2 < translation_threshold and rotation_l2 < rotation_threshold_deg
 
     if sum_decimal == "no_number":
         move_pattern_no_number = re.compile(

@@ -713,6 +713,28 @@ _CONFIGS = [
         data=RLDSDataConfig(language_action_format_name="openvla", transform_strategy="openvla"),
         batch_size=2048,
     ),
+    # Baseline: raw signed-integer actions without natural-language templates.
+    # Actions are summarised the same way as the standard LAP format (EEF frame,
+    # cm / degrees) but output as "+5 -3 -1 +15 +23 +35 0" instead of natural
+    # language. The prompt describes each dimension and its units.
+    TrainConfig(
+        name="raw_numeric",
+        model=lap_config.LAPConfig(
+            action_dim=7,
+            action_horizon=16,
+            max_token_len=180,
+            stop_action_to_vlm_grad=True,
+            pi05=True,
+            discrete_state_input=True,
+            enable_action_training=True,
+            enable_langact_training=True,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+            prompt_format="raw_numeric",
+        ),
+        data=RLDSDataConfig(language_action_format_name="raw_numeric_with_rotation"),
+        batch_size=2048,
+    ),
     # Reference: "VLA-0: Building State-of-the-Art VLAs with Zero Modification"
     TrainConfig(
         name="vla0_replicated",

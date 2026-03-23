@@ -42,7 +42,7 @@ class LanguageActionFormat:
 
     name: str
     # Style of formatting
-    style: Literal["verbose", "compact", "vla0", "openvla"] = "verbose"
+    style: Literal["verbose", "compact", "vla0", "openvla", "raw_numeric"] = "verbose"
     # For verbose style: decimal places for numeric values
     decimal_places: int = 0
     # Whether to include rotation components in descriptions
@@ -292,6 +292,62 @@ class VLA0ActionFormat(LanguageActionFormat):
 
 
 @dataclasses.dataclass(frozen=True)
+class RawNumericActionFormat(LanguageActionFormat):
+    """Raw signed-integer action format without natural-language templates.
+
+    Like the standard LAP format, actions are first summarised with frame
+    transformation (EEF or base frame).  Unlike LAP, the output is a compact
+    string of 7 space-separated signed integers rather than a natural-language
+    sentence, e.g. ``"+5 -3 -1 +15 +23 +35 0"``.
+
+    Dimensions (always in this order):
+        dx   dy   dz   droll  dpitch  dyaw  gripper
+        (cm) (cm) (cm) (deg)  (deg)   (deg) (0=close/1=open)
+
+    Positive dx = forward, positive dy = left, positive dz = up.
+    The meaning of each dimension is described in the accompanying prompt
+    format (``raw_numeric`` in the prompt registry).
+    """
+
+    name: str = "raw_numeric_with_rotation"
+    style: Literal["raw_numeric"] = "raw_numeric"
+    include_rotation: bool = True  # always include all 6 DOF
+
+    def get_sum_decimal(self) -> str:
+        return "raw_numeric"
+
+    def parse_language_to_deltas(
+        self,
+        reasoning: str | list[str],
+        *,
+        initial_state: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, float | None]:
+        """Parse ``"+5 -3 -1 +15 +23 +35 0"`` back to (movement, gripper)."""
+        if isinstance(reasoning, list):
+            reasoning = " ".join(reasoning)
+        try:
+            vals = [int(v) for v in reasoning.strip().split()]
+        except ValueError:
+            return np.zeros(6, dtype=float), None
+        if len(vals) < 7:
+            return np.zeros(6, dtype=float), None
+
+        movement = np.zeros(6, dtype=float)
+        movement[0] = vals[0] / 100.0  # cm → m
+        movement[1] = vals[1] / 100.0
+        movement[2] = vals[2] / 100.0
+        movement[3] = vals[3] * np.pi / 180.0  # deg → rad
+        movement[4] = vals[4] * np.pi / 180.0
+        movement[5] = vals[5] * np.pi / 180.0
+        gripper = float(vals[6])
+
+        if self.use_eef_frame and initial_state is not None:
+            movement = transform_actions_from_eef_frame(movement, initial_state)[0]
+
+        return movement, gripper
+
+
+@dataclasses.dataclass(frozen=True)
 class OpenVLAActionFormat(LanguageActionFormat):
     """OpenVLA-style action format.
 
@@ -318,7 +374,10 @@ class OpenVLAActionFormat(LanguageActionFormat):
         return "openvla"
 
     def _value_to_bin(self, value: float) -> int:
-        """Map a cm/degree value to a bin index in [0, num_bins - 1]."""
+        """Map a cm/degree value to a bin index in [0, num_bins - 1].
+
+        Values below -128 saturate at bin 0; values >= 128 saturate at bin 255.
+        """
         return int(np.clip(int(np.floor(value + 128)), 0, self.num_bins - 1))
 
     def _gripper_to_bin(self, gripper: float) -> int:
@@ -373,6 +432,11 @@ OPENVLA_FORMAT = OpenVLAActionFormat(
     num_bins=256,
 )
 
+RAW_NUMERIC_WITH_ROTATION_FORMAT = RawNumericActionFormat(
+    name="raw_numeric_with_rotation",
+    use_eef_frame=True,
+)
+
 LANGUAGE_ACTION_FORMAT_REGISTRY = {
     fmt.name: fmt
     for fmt in [
@@ -380,6 +444,7 @@ LANGUAGE_ACTION_FORMAT_REGISTRY = {
         VERBOSE_EEF_WITH_ROTATION_FORMAT,
         VLA0_CHUNKED_FORMAT,
         OPENVLA_FORMAT,
+        RAW_NUMERIC_WITH_ROTATION_FORMAT,
     ]
 }
 
