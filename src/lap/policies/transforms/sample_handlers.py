@@ -336,7 +336,7 @@ class RobotSampleHandler:
     enable_langact_training: bool = True
     use_rough_scale: bool = False
     enable_diverse_questions: bool = False
-    transform_strategy: Literal["standard", "vla0"] = "standard"
+    transform_strategy: Literal["standard", "vla0", "openvla"] = "standard"
 
     def process(
         self,
@@ -367,6 +367,8 @@ class RobotSampleHandler:
     def _select_strategy(self) -> RobotSampleProcessingStrategy:
         if self.transform_strategy == "vla0":
             return VLA0RobotSampleStrategy()
+        if self.transform_strategy == "openvla":
+            return OpenVLARobotSampleStrategy()
         return StandardRobotSampleStrategy()
 
     def _process_language_actions(
@@ -453,5 +455,55 @@ class VLA0RobotSampleStrategy:
             inputs["language_actions"] = ""
             inputs["frame_description"] = "normalized"
 
+        inputs["sample_mask"] = True
+        return inputs
+
+
+@dataclasses.dataclass
+class OpenVLARobotSampleStrategy:
+    """Robot sample strategy for the OpenVLA format.
+
+    Like LAP, actions are summarized with frame transformation (EEF or base
+    frame).  Unlike LAP, the result is not converted to natural language.
+    Instead the 7-D action array is kept as integers and binned into 256
+    uniform bins that are mapped to the 256 least-used PaliGemma tokens.
+    """
+
+    def process(
+        self,
+        *,
+        data: dict,
+        inputs: dict,
+        dataset_name: str,
+        rotation_applied: bool,
+        handler: RobotSampleHandler,
+    ) -> dict:
+        from lap.policies.lang_action_formats import OpenVLAActionFormat
+
+        if "language_actions" not in data:
+            inputs["language_actions"] = ""
+            inputs["frame_description"] = "robot base frame"
+            inputs["sample_mask"] = True
+            return inputs
+
+        initial_state = np.asarray(data.get("raw_state", np.zeros(10)))
+        has_wrist_image = data.get("has_wrist_image", False)
+
+        # Transform to appropriate frame — identical to the LAP approach.
+        raw_actions = np.asarray(data["language_actions"], dtype=float)
+        transformed_actions, frame_description = handler.action_processor.transform_to_frame(
+            raw_actions, initial_state, dataset_name, rotation_applied, has_wrist_image
+        )
+
+        # Extract physical-unit components (cm / degrees).
+        motion_components = ActionProcessor.extract_motion_components(transformed_actions)
+
+        # Bin each dimension and map to the 256 least-used PaliGemma tokens.
+        assert isinstance(handler.language_action_format, OpenVLAActionFormat), (
+            f"OpenVLARobotSampleStrategy requires an OpenVLAActionFormat, "
+            f"got {type(handler.language_action_format)}"
+        )
+        inputs["language_actions"] = handler.language_action_format.summarize_motion_components(motion_components)
+        inputs["frame_description"] = frame_description
         inputs["sample_mask"] = True
         return inputs

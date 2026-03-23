@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 import logging
 import re
 from typing import Literal
@@ -6,6 +7,29 @@ from typing import Literal
 import numpy as np
 
 from lap.policies.transforms.frame_transforms import transform_actions_from_eef_frame
+
+# PaliGemma tokenizer location (same as used in models/tokenizer.py)
+_PALIGEMMA_TOKENIZER_MODEL_PATH = "gs://big_vision/paligemma_tokenizer.model"
+
+
+@functools.lru_cache(maxsize=1)
+def _get_openvla_action_token_pieces(num_bins: int = 256) -> tuple[str, ...]:
+    """Return num_bins token pieces from the end of the PaliGemma vocabulary.
+
+    The last tokens in the BPE vocabulary are the least-used ones and are
+    conventionally repurposed as action tokens in OpenVLA-style models.
+    Result is cached so the tokenizer is loaded at most once per process.
+    """
+    import sentencepiece
+
+    from lap.shared import download
+
+    path = download.maybe_download(_PALIGEMMA_TOKENIZER_MODEL_PATH, gs={"token": "anon"})
+    with path.open("rb") as f:
+        spm = sentencepiece.SentencePieceProcessor(model_proto=f.read())
+    vocab_size = spm.vocab_size()
+    # bin i → token at (vocab_size - num_bins + i)
+    return tuple(spm.id_to_piece(vocab_size - num_bins + i) for i in range(num_bins))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -18,7 +42,7 @@ class LanguageActionFormat:
 
     name: str
     # Style of formatting
-    style: Literal["verbose", "compact", "vla0"] = "verbose"
+    style: Literal["verbose", "compact", "vla0", "openvla"] = "verbose"
     # For verbose style: decimal places for numeric values
     decimal_places: int = 0
     # Whether to include rotation components in descriptions
@@ -267,6 +291,62 @@ class VLA0ActionFormat(LanguageActionFormat):
         return continuous.reshape(self.action_horizon, self.action_dim)
 
 
+@dataclasses.dataclass(frozen=True)
+class OpenVLAActionFormat(LanguageActionFormat):
+    """OpenVLA-style action format.
+
+    Like LAP, actions are first summarized with frame transformation.  Unlike
+    LAP, the 7-D action is kept as integers rather than converted to natural
+    language.  Each dimension is binned into 256 uniform bins covering the
+    range [-128, 128] (cm for translation, degrees for rotation).  Gripper
+    uses only bin 0 (close) or bin 1 (open).
+
+    The 256 bins are mapped to the 256 least-used tokens in the PaliGemma
+    vocabulary (the last entries of the BPE table) so that action tokens do
+    not overlap with common language tokens.
+
+    Bin assignment:
+        bin_i covers [i - 128, i - 127) cm/degrees
+        bin = clip(floor(value + 128), 0, 255)
+    """
+
+    name: str = "openvla"
+    style: Literal["openvla"] = "openvla"
+    num_bins: int = 256
+
+    def get_sum_decimal(self) -> str:
+        return "openvla"
+
+    def _value_to_bin(self, value: float) -> int:
+        """Map a cm/degree value to a bin index in [0, num_bins - 1]."""
+        return int(np.clip(int(np.floor(value + 128)), 0, self.num_bins - 1))
+
+    def _gripper_to_bin(self, gripper: float) -> int:
+        """Map gripper state to bin 0 (close) or bin 1 (open)."""
+        return 1 if gripper >= 0.5 else 0
+
+    def motion_to_bins(self, motion_components: dict) -> list[int]:
+        """Convert motion components (cm/degrees) to bin indices (length 7)."""
+        return [
+            self._value_to_bin(motion_components["dx_cm"]),
+            self._value_to_bin(motion_components["dy_cm"]),
+            self._value_to_bin(motion_components["dz_cm"]),
+            self._value_to_bin(motion_components["droll_deg"]),
+            self._value_to_bin(motion_components["dpitch_deg"]),
+            self._value_to_bin(motion_components["dyaw_deg"]),
+            self._gripper_to_bin(motion_components["gripper"]),
+        ]
+
+    def bins_to_string(self, bins: list[int]) -> str:
+        """Convert bin indices to a space-separated string of action token pieces."""
+        pieces = _get_openvla_action_token_pieces(self.num_bins)
+        return " ".join(pieces[b] for b in bins)
+
+    def summarize_motion_components(self, motion_components: dict) -> str:
+        """Full pipeline: motion components → bin indices → token-piece string."""
+        return self.bins_to_string(self.motion_to_bins(motion_components))
+
+
 # Predefined language action formats
 
 VERBOSE_WITH_ROTATION_FORMAT = LanguageActionFormat(
@@ -288,12 +368,18 @@ VLA0_CHUNKED_FORMAT = VLA0ActionFormat(
     action_dim=7,
 )
 
+OPENVLA_FORMAT = OpenVLAActionFormat(
+    name="openvla",
+    num_bins=256,
+)
+
 LANGUAGE_ACTION_FORMAT_REGISTRY = {
     fmt.name: fmt
     for fmt in [
         VERBOSE_WITH_ROTATION_FORMAT,
         VERBOSE_EEF_WITH_ROTATION_FORMAT,
         VLA0_CHUNKED_FORMAT,
+        OPENVLA_FORMAT,
     ]
 }
 

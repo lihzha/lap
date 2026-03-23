@@ -116,7 +116,8 @@ class DataConfig(upstream_config.DataConfig):
     language_action_format_name: str = "verbose_eef_with_rotation"
     # Transform behavior mode for sample/output transforms.
     # Use "vla0" only for VLA-0-format transform behavior.
-    transform_strategy: Literal["standard", "vla0"] = "standard"
+    # Use "openvla" for the OpenVLA baseline (action bins → least-used tokens).
+    transform_strategy: Literal["standard", "vla0", "openvla"] = "standard"
     horizon_seconds: list[float] = dataclasses.field(default_factory=lambda: [1.0])
 
     # Prediction training parameters
@@ -694,6 +695,22 @@ _CONFIGS = [
             action_expert_variant="gemma3_300m_62",
         ),
         weight_loader=weight_loaders.WeightLoaderChoice(kind="gemma3", params_path="checkpoints/gemma3-27b-it"),
+        batch_size=2048,
+    ),
+    TrainConfig(
+        name="openvla",
+        model=lap_config.LAPConfig(
+            action_dim=7,
+            action_horizon=10,
+            max_token_len=60,
+            pi05=True,
+            discrete_state_input=True,
+            enable_action_training=False,
+            enable_langact_training=True,
+            paligemma_variant="gemma_2b",
+            action_expert_variant="gemma_300m",
+        ),
+        data=RLDSDataConfig(language_action_format_name="openvla", transform_strategy="openvla"),
         batch_size=2048,
     ),
     # Reference: "VLA-0: Building State-of-the-Art VLAs with Zero Modification"
