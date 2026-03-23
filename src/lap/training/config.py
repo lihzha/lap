@@ -735,6 +735,40 @@ _CONFIGS = [
         data=RLDSDataConfig(language_action_format_name="raw_numeric_with_rotation"),
         batch_size=2048,
     ),
+    TrainConfig(
+        name="maniskill",
+        model=lap_config.LAPConfig(
+            action_dim=7,
+            action_horizon=16,
+            max_token_len=180,
+            enable_action_training=True,
+            stop_action_to_vlm_grad=False,
+            language_loss_weight=0.4,
+            enable_image_augmentation=False,
+        ),
+        data=RLDSDataConfig(
+            shuffle_buffer_size=100000,
+            repo_id="maniskill",
+            asset_id="maniskill",
+            data_mix="maniskill_plug_charger",
+            val_fraction=0.0,
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1000,
+            peak_lr=5e-5,
+            decay_steps=40_000,
+            decay_lr=5e-5,
+        ),
+        weight_loader=weight_loaders.WeightLoaderChoice(
+            kind="checkpoint",
+            params_path="checkpoints/lap/params",
+        ),
+        save_interval=2000,
+        keep_period=2000,
+        num_train_steps=40_001,
+        batch_size=256,
+        ema_schedule_choice=EmaScheduleChoice(kind="constant"),
+    ),
     # Reference: "VLA-0: Building State-of-the-Art VLAs with Zero Modification"
     TrainConfig(
         name="vla0_replicated",
