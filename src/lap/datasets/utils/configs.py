@@ -297,6 +297,19 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
     },
+    "maniskill_plug_charger": {
+        "image_obs_keys": {
+            "primary": "image",
+            "secondary": None,
+            "wrist": "wrist_image",
+        },
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        "state_obs_keys": [
+            "state",
+        ],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+    },
     "agibot_large_dataset": {
         "image_obs_keys": {
             "primary": "head_image",
@@ -514,6 +527,12 @@ OXE_DATASET_METADATA = {
         "has_suboptimal": "No",
     },
     "libero_goal_no_noops": {
+        "control_frequency": 15,
+        "language_annotations": "Natual detailed instructions",
+        "robot_morphology": "Single Arm",
+        "has_suboptimal": "No",
+    },
+    "maniskill_plug_charger": {
         "control_frequency": 15,
         "language_annotations": "Natual detailed instructions",
         "robot_morphology": "Single Arm",

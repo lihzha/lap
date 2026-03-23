@@ -1480,6 +1480,11 @@ def libero_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
 
     return trajectory
 
+def maniskill_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
+
+    trajectory["language_action"] = trajectory["action"]
+
+    return trajectory
 
 def human_dataset_transform(sample: dict[str, Any]) -> dict[str, Any]:
     """
@@ -1763,4 +1768,5 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "yam_demo_dataset": yam_dataset_transform,
     "franka_rollout_dataset": franka_dataset_transform,
     "yam_rollout_dataset": yam_dataset_transform,
+    "maniskill_plug_charger": maniskill_dataset_transform,
 }
