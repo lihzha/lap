@@ -178,6 +178,77 @@ def log_random_examples(
         wandb.log({f"{prefix}/random_examples": images_to_log}, step=step)
 
 
+def log_openvla_bins(
+    step: int,
+    host_batch: tuple["CoTObservation", _model.Actions] | None,
+    tokenizer: "PaligemmaTokenizer",
+    *,
+    local_batch_size: int,
+    num_random: int = 5,
+    dataset_log_tracker: DatasetLogTracker | None = None,
+    prefix: str = "train",
+    num_bins: int = 256,
+) -> None:
+    """Log OpenVLA action-bin breakdowns and a wandb.Table for a random subset of examples.
+
+    Logs two artefacts:
+    - ``{prefix}/openvla_bins`` – a wandb.Table with columns
+      [sample_idx, dim, physical_value, bin_idx, token_id].
+    - ``{prefix}/openvla_examples`` – the same images logged by
+      log_random_examples but with per-example bin-breakdown captions.
+    """
+    if host_batch is None or local_batch_size <= 0:
+        return
+    count = min(num_random, local_batch_size)
+    if count <= 0:
+        return
+
+    rng_local = np.random.default_rng(int(step + 1009))
+    if dataset_log_tracker is not None:
+        dataset_names = dataset_log_tracker.get_dataset_names_from_batch(host_batch)
+        rand_idx = (
+            dataset_log_tracker.select_indices_uniform(dataset_names, count, rng_local)
+            if dataset_names
+            else rng_local.choice(local_batch_size, size=count, replace=False).tolist()
+        )
+    else:
+        rand_idx = rng_local.choice(local_batch_size, size=count, replace=False).tolist()
+
+    results, table = batch_visualization.visualize_openvla_bins(
+        host_batch,
+        tokenizer,
+        indices=rand_idx,
+        max_examples=count,
+        num_bins=num_bins,
+    )
+    if not results:
+        return
+
+    log_dict: dict = {}
+
+    # W&B table with one row per (sample, dimension)
+    if table is not None:
+        log_dict[f"{prefix}/openvla_bins"] = table
+
+    # Combined image + bin-breakdown caption
+    try:
+        visuals = batch_visualization.visualize_language_actions(
+            host_batch, tokenizer, indices=rand_idx, max_examples=count
+        )
+        caption_by_idx = {r["index"]: r["caption"] for r in results}
+        images_to_log = []
+        for vis in visuals:
+            caption = caption_by_idx.get(vis["index"], "")
+            images_to_log.append(wandb.Image(vis["image"], caption=caption))
+        if images_to_log:
+            log_dict[f"{prefix}/openvla_examples"] = images_to_log
+    except Exception:
+        logging.exception("Failed to build OpenVLA example images")
+
+    if log_dict:
+        wandb.log(log_dict, step=step)
+
+
 def process_and_log_metrics(
     step: int,
     infos: list[dict[str, at.Array]],
@@ -218,14 +289,30 @@ def process_and_log_metrics(
 
         if not prefix and host_batch_cache is not None and tok is not None and dataset_log_tracker is not None:
             host_batch_local, local_size = host_batch_cache.ensure(step=step, batch=batch)
+            log_prefix = prefix[:-1] if prefix else "train"
             log_random_examples(
                 step,
                 host_batch_local,
                 tok,
                 local_batch_size=local_size,
                 dataset_log_tracker=dataset_log_tracker,
-                prefix=prefix[:-1] if prefix else "train",
+                prefix=log_prefix,
             )
+
+            is_openvla = (
+                hasattr(config, "data")
+                and hasattr(config.data, "transform_strategy")
+                and config.data.transform_strategy == "openvla"
+            )
+            if is_openvla:
+                log_openvla_bins(
+                    step,
+                    host_batch_local,
+                    tok,
+                    local_batch_size=local_size,
+                    dataset_log_tracker=dataset_log_tracker,
+                    prefix=log_prefix,
+                )
 
             if step % (config.log_interval * 10) == 0:
                 log_stats = dataset_log_tracker.get_stats()

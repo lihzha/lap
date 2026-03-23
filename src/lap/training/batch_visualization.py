@@ -232,6 +232,80 @@ def vis_batch(batch, tok=None, step=None):
         logging.info(f"Logged {len(wandb_images)} image groups to wandb")
 
 
+_OPENVLA_DIM_NAMES = ["dx_cm", "dy_cm", "dz_cm", "roll_deg", "pitch_deg", "yaw_deg", "gripper"]
+
+
+def visualize_openvla_bins(
+    batch: tuple[CoTObservation, _model.Actions],
+    tok: PaligemmaTokenizer,
+    *,
+    indices: Sequence[int] | None = None,
+    max_examples: int | None = 5,
+    num_bins: int = 256,
+) -> tuple[list[dict], "wandb.Table | None"]:
+    """Decode OpenVLA action tokens back to bin indices and physical values.
+
+    For each selected example the function:
+    - Reads the action token IDs from the tokenized_langact_mask positions
+    - Maps token IDs → bin indices (token_id = vocab_size - num_bins + bin_idx)
+    - Converts bin indices → physical values (bin_center = bin_idx - 127.5 cm/deg)
+    - Special-cases the gripper dimension (bin 0 = close, bin 1 = open)
+
+    Returns:
+        (results, table) where results is a per-example list of dicts with
+        keys "index", "caption", "rows" and table is a wandb.Table suitable for
+        logging directly to W&B.
+    """
+    obs, _ = batch
+    tokens_all = array_utils.to_local_array(obs.tokenized_prompt)
+    langact_mask_arr = array_utils.to_local_array(obs.tokenized_langact_mask)
+
+    if tokens_all is None or langact_mask_arr is None:
+        return [], None
+
+    vocab_size = tok._tokenizer.vocab_size()
+    token_offset = vocab_size - num_bins  # bin i lives at token_offset + i
+
+    batch_size = tokens_all.shape[0]
+    if indices is None:
+        indices_list = list(range(batch_size))
+    else:
+        indices_list = [i for i in indices if 0 <= i < batch_size]
+    if max_examples is not None:
+        indices_list = indices_list[:max_examples]
+
+    table = wandb.Table(columns=["sample_idx", "dim", "physical_value", "bin_idx", "token_id"])
+    results: list[dict] = []
+
+    for idx in indices_list:
+        action_tok_ids = tokens_all[idx][langact_mask_arr[idx].astype(bool)]
+
+        header = f"{'dim':<12} {'cm / deg':>9}  {'bin':>4}  {'tok_id':>7}"
+        sep = "-" * len(header)
+        caption_lines = [header, sep]
+        rows: list[dict] = []
+
+        for dim_i, raw_tok_id in enumerate(action_tok_ids[:7]):
+            tok_id = int(raw_tok_id)
+            bin_idx = tok_id - token_offset
+            dim_name = _OPENVLA_DIM_NAMES[dim_i] if dim_i < len(_OPENVLA_DIM_NAMES) else f"dim{dim_i}"
+
+            if dim_i == 6:  # gripper
+                phys_str = "open" if bin_idx == 1 else "close"
+                phys_val = float(bin_idx)
+            else:
+                phys_val = bin_idx - 127.5  # centre of bin in cm / degrees
+                phys_str = f"{phys_val:+.1f}"
+
+            caption_lines.append(f"{dim_name:<12} {phys_str:>9}  {bin_idx:>4}  {tok_id:>7}")
+            table.add_data(idx, dim_name, phys_str, bin_idx, tok_id)
+            rows.append({"dim": dim_name, "phys_val": phys_str, "bin_idx": bin_idx, "tok_id": tok_id})
+
+        results.append({"index": idx, "caption": "\n".join(caption_lines), "rows": rows})
+
+    return results, table
+
+
 def vis_augmented_images(
     augmented_images: dict[str, jax.Array] | None,
     step: int,
