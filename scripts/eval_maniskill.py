@@ -179,8 +179,8 @@ def _convert_action(policy_action: np.ndarray) -> np.ndarray:
     action = policy_action.copy().astype(np.float32)
 
     # Clip to controller limits
-    # action[:3] = np.clip(action[:3], -0.1, 0.1)
-    # action[3:6] = np.clip(action[3:6], -0.1, 0.1)
+    action[:3] = np.clip(action[:3], -0.1, 0.1)
+    action[3:6] = np.clip(action[3:6], -0.1, 0.1)
 
     # Map gripper from normalised [0, 1] to finger-joint target [0, 0.04]
     action[6] = np.clip(float(action[6]) * 2 - 1, -1.0, 1.0)
@@ -255,7 +255,7 @@ def main(args: Args) -> None:
         episode_id = demo_ep["episode_id"]
         episode_seed = demo_ep["reset_kwargs"]["seed"]
         obs, _ = env.reset(seed=episode_seed)
-        _set_initial_state_from_h5(env, demo_h5, episode_id)
+        # _set_initial_state_from_h5(env, demo_h5, episode_id)
         obs = env.unwrapped.get_obs()
         logging.info("Episode %d: using demo episode_id=%d seed=%d", ep + 1, episode_id, episode_seed)
 

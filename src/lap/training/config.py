@@ -107,8 +107,8 @@ class DataConfig(upstream_config.DataConfig):
     # Augmentation parameters
     aggressive_aug: bool = False
     aug_wrist_image: bool = True
-    random_base_prob: float = 0.5
-    random_mask_prob: float = 0.2
+    random_frame_prob: float = 0.0
+    mask_zero_img_prob: float = 0.2
     not_rotate_wrist_prob: float = 0.0
     use_rough_scale: bool = False
 
@@ -342,8 +342,8 @@ class RLDSDataConfig(BaseDataConfigFactory):
                     wrist_image_dropout_prob=base_cfg.wrist_image_dropout_prob,
                     action_encoding=base_cfg.action_encoding,
                     language_action_format=base_cfg.language_action_format_name,
-                    random_mask_prob=base_cfg.random_mask_prob,
-                    random_base_prob=base_cfg.random_base_prob,
+                    mask_zero_img_prob=base_cfg.mask_zero_img_prob,
+                    random_frame_prob=base_cfg.random_frame_prob,
                     use_rough_scale=base_cfg.use_rough_scale,
                     transform_strategy=base_cfg.transform_strategy,
                     enable_langact_training=model_config.enable_langact_training,
@@ -608,6 +608,7 @@ class TrainConfig(upstream_config.TrainConfig):
 _CONFIGS = [
     TrainConfig(
         name="lap",
+        data=RLDSDataConfig(random_frame_prob=0.5),
         model=lap_config.LAPConfig(
             action_dim=7,
             action_horizon=16,

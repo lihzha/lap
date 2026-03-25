@@ -14,25 +14,25 @@ class ImageHandler:
 
     Attributes:
         wrist_image_dropout_prob: Probability of dropping wrist images during training.
-        random_mask_prob: Probability of masking zero images (for data augmentation).
+        mask_zero_img_prob: Probability of masking zero images (for data augmentation).
     """
 
     wrist_image_dropout_prob: float = 0.0
-    random_mask_prob: float = 0.0
+    mask_zero_img_prob: float = 0.0
 
     @staticmethod
-    def create_image_mask(image: np.ndarray, random_mask_prob: float = 0.0) -> np.bool_:
+    def create_image_mask(image: np.ndarray, mask_zero_img_prob: float = 0.0) -> np.bool_:
         """Create a mask indicating whether an image should be used.
 
         Args:
             image: Input image array.
-            random_mask_prob: Probability of randomly masking zero images.
+            mask_zero_img_prob: Probability of randomly masking zero images.
 
         Returns:
             Boolean mask (True = use image, False = mask out).
         """
         if np.all(image == 0.0):
-            if random_mask_prob > 0.0 and np.random.rand() < random_mask_prob:
+            if mask_zero_img_prob > 0.0 and np.random.rand() < mask_zero_img_prob:
                 return np.True_
             return np.False_
         return np.True_
@@ -70,21 +70,21 @@ class ImageHandler:
 
         observation = data.get("observation", {})
 
-        def add_image(image: np.ndarray, random_mask_prob: float = 0.0) -> None:
-            mask = self.create_image_mask(image, random_mask_prob=random_mask_prob)
+        def add_image(image: np.ndarray, mask_zero_img_prob: float = 0.0) -> None:
+            mask = self.create_image_mask(image, mask_zero_img_prob=mask_zero_img_prob)
             images.append(image)
             image_masks.append(mask)
 
         def get_effective_mask_prob() -> float:
             """Get mask probability, disabled for VQA samples."""
-            return 0.0 if is_vqa_sample else self.random_mask_prob
+            return 0.0 if is_vqa_sample else self.mask_zero_img_prob
 
         if not is_prediction_sample:
             # Regular sample processing
             add_image(base_image)
             for key in IMAGE_KEYS[1:]:
                 wrist_image = self._get_wrist_image(observation, key, base_image, is_vqa_sample)
-                add_image(wrist_image, random_mask_prob=get_effective_mask_prob())
+                add_image(wrist_image, mask_zero_img_prob=get_effective_mask_prob())
 
         elif not pred_use_primary:
             # Prediction sample without primary - use all images as-is

@@ -36,8 +36,8 @@ class CoTInputs(upstream_transforms.DataTransformFn):
         action_encoding: Encoding used for robot actions.
         enable_langact_training: Whether to generate language action labels.
         use_rough_scale: Use rough scale descriptions instead of precise values.
-        random_base_prob: Probability of using base frame instead of EEF frame.
-        random_mask_prob: Probability of masking zero images.
+        random_frame_prob: Probability of using base frame instead of EEF frame.
+        mask_zero_img_prob: Probability of masking zero images.
         enable_diverse_questions: Enable diverse question types for prediction.
         question_config: Configuration for diverse question generation.
     """
@@ -59,8 +59,8 @@ class CoTInputs(upstream_transforms.DataTransformFn):
     transform_strategy: str = "standard"
 
     # Frame configuration
-    random_base_prob: float = 0.0
-    random_mask_prob: float = 0.0
+    random_frame_prob: float = 0.0
+    mask_zero_img_prob: float = 0.0
 
     # Diverse question configuration
     enable_diverse_questions: bool = False
@@ -94,14 +94,14 @@ class CoTInputs(upstream_transforms.DataTransformFn):
         """Create image handler with current configuration."""
         return ImageHandler(
             wrist_image_dropout_prob=self.wrist_image_dropout_prob,
-            random_mask_prob=self.random_mask_prob,
+            mask_zero_img_prob=self.mask_zero_img_prob,
         )
 
     def _create_action_processor(self) -> ActionProcessor:
         """Create action processor with current configuration."""
         return ActionProcessor(
             language_action_format=self.language_action_format,
-            random_base_prob=self.random_base_prob,
+            random_frame_prob=self.random_frame_prob,
         )
 
     def _create_vqa_handler(self) -> VQASampleHandler:

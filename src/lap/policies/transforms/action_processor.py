@@ -22,11 +22,11 @@ class ActionProcessor:
 
     Attributes:
         language_action_format: Format specification for action summarization.
-        random_base_prob: Probability of using base frame instead of EEF frame.
+        random_frame_prob: Probability of using base frame instead of EEF frame.
     """
 
     language_action_format: "LanguageActionFormat"
-    random_base_prob: float = 0.0
+    random_frame_prob: float = 0.0
 
     def summarize_language_actions(
         self,
@@ -88,8 +88,8 @@ class ActionProcessor:
         use_eef_frame = self.language_action_format.use_eef_frame and initial_state is not None
 
         # Apply random base frame selection during training
-        if self.random_base_prob > 0.0:
-            use_eef_frame = use_eef_frame and has_wrist_image and random.random() < (1 - self.random_base_prob)
+        if self.random_frame_prob > 0.0:
+            use_eef_frame = use_eef_frame and has_wrist_image and random.random() < (1 - self.random_frame_prob)
 
         frame_description = "end-effector frame" if use_eef_frame else "robot base frame"
         return use_eef_frame, frame_description
