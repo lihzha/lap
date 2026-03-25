@@ -63,6 +63,8 @@ def transform_actions_to_eef_frame(
         delta_rot_eef[2] = -delta_rot_eef[2]
     elif "berkeley_autolab_ur5" in dataset_name:
         delta_rot_eef[1] = -delta_rot_eef[1]
+    elif "maniskill" in dataset_name:
+        delta_rot_eef[2] = -delta_rot_eef[2]
 
     transformed_actions[3:6] = delta_rot_eef
     return transformed_actions
@@ -126,4 +128,3 @@ def transform_actions_from_eef_frame(
             transformed_actions[i, 3:6] = delta_rot_base
 
     return transformed_actions
-

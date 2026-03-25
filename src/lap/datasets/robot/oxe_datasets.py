@@ -267,3 +267,17 @@ class LiberoDataset(SingleOXEDataset):
             window_size=action_horizon,
         )
         return traj
+
+
+@register_dataset(matcher=lambda n: n.startswith("maniskill"), priority=10)
+class ManiskillDataset(SingleOXEDataset):
+    def chunk_actions(self, traj, action_horizon, action_key="actions"):
+        from lap.datasets.utils.tfdata_pipeline import gather_with_padding
+
+        traj_len = tf.shape(traj[action_key])[0]
+        traj[action_key] = gather_with_padding(
+            data=traj[action_key],
+            sequence_length=traj_len,
+            window_size=action_horizon,
+        )
+        return traj
