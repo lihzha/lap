@@ -168,12 +168,18 @@ def _validate_loaded_params(expected: at.Params, got: at.Params, *, allow_partia
         expected_value = flat_expected[key]
         if hasattr(value, "shape") and hasattr(expected_value, "shape") and value.shape != expected_value.shape:
             mismatches.append((key, f"shape {value.shape} != {expected_value.shape}"))
-        if hasattr(value, "dtype") and hasattr(expected_value, "dtype") and value.dtype != expected_value.dtype:
+        elif hasattr(value, "dtype") and hasattr(expected_value, "dtype") and value.dtype != expected_value.dtype:
             mismatches.append((key, f"dtype {value.dtype} != {expected_value.dtype}"))
 
     if mismatches:
         sample = ", ".join("/".join(k) + f" ({reason})" for k, reason in mismatches[:8])
-        raise ValueError(f"Loaded params do not match expected shapes/dtypes (sample): {sample}")
+        logging.warning(
+            "Loaded params have shape/dtype mismatches; re-initializing %d param(s) randomly (sample): %s",
+            len(mismatches),
+            sample,
+        )
+        mismatch_keys = {k for k, _ in mismatches}
+        flat_got = {k: v for k, v in flat_got.items() if k not in mismatch_keys}
 
     missing = set(flat_expected) - set(flat_got)
     all_missing = ", ".join("/".join(k) for k in list(missing))

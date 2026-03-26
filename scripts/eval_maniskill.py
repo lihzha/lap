@@ -179,8 +179,8 @@ def _convert_action(policy_action: np.ndarray) -> np.ndarray:
     action = policy_action.copy().astype(np.float32)
 
     # Clip to controller limits
-    action[:3] = np.clip(action[:3], -0.1, 0.1)
-    action[3:6] = np.clip(action[3:6], -0.1, 0.1)
+    # action[:3] = np.clip(action[:3], -0.1, 0.1)
+    # action[3:6] = np.clip(action[3:6], -0.1, 0.1)
 
     # Map gripper from normalised [0, 1] to finger-joint target [0, 0.04]
     action[6] = np.clip(float(action[6]) * 2 - 1, -1.0, 1.0)
