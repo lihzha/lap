@@ -49,4 +49,5 @@ OXE_NAMED_MIXTURES: dict[str, list[tuple[str, float]]] = {
         ("droid", 1.0),
     ],
     "maniskill_dataset": [("maniskill_dataset", 1.0)],
+    "aria_dataset": [("aria_dataset", 1.0)],
 }

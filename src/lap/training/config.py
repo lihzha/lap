@@ -739,7 +739,7 @@ _CONFIGS = [
     TrainConfig(
         name="maniskill",
         model=lap_config.LAPConfig(
-            action_dim=7,
+            action_dim=8,
             action_horizon=16,
             max_token_len=180,
             enable_action_training=True,

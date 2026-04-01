@@ -120,7 +120,7 @@ def _set_initial_state_from_h5(env: gym.Env, h5_file: h5py.File, episode_id: int
 # ---------------------------------------------------------------------------
 
 _IMAGE_SIZE = 224
-_CONTROL_MODE = "pd_ee_delta_pose"
+_CONTROL_MODE = "pd_joint_pos"
 
 
 def _build_policy_obs(obs: dict, prompt: str) -> dict:
@@ -183,7 +183,7 @@ def _convert_action(policy_action: np.ndarray) -> np.ndarray:
     # action[3:6] = np.clip(action[3:6], -0.1, 0.1)
 
     # Map gripper from normalised [0, 1] to finger-joint target [0, 0.04]
-    action[6] = np.clip(float(action[6]) * 2 - 1, -1.0, 1.0)
+    action[-1] = np.clip(float(action[-1]) * 2 - 1, -1.0, 1.0)
 
     return action
 

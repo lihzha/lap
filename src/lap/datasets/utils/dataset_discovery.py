@@ -7,6 +7,7 @@ def ensure_datasets_registered() -> None:
     """Import dataset modules so registration decorators run."""
     importlib.import_module("lap.datasets.robot.droid_dataset")
     importlib.import_module("lap.datasets.robot.oxe_datasets")
+    importlib.import_module("lap.datasets.human.aria_dataset")
 
     importlib.import_module("lap.datasets.vqa.coco_caption_dataset")
     importlib.import_module("lap.datasets.vqa.lvis_dataset")

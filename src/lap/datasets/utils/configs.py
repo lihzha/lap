@@ -329,6 +329,23 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
     },
+    "aria_dataset": {
+        "image_obs_keys": {
+            "primary": "image",    # egocentric head camera
+            "secondary": None,
+            "wrist": None,         # no wrist camera for human data
+        },
+        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+        # state = [left_xyz(3), left_euler(3), right_xyz(3), right_euler(3)] (12D)
+        # set by aria_dataset_transform into observation["state"]
+        "state_obs_keys": ["state"],
+        "state_encoding": StateEncoding.POS_EULER,
+        "action_encoding": ActionEncoding.EEF_POS,
+        "control_frequency": 30,
+        "language_annotations": "Natural",
+        "robot_morphology": "Bi-Manual",
+        "has_suboptimal": "No",
+    },
     "molmoact_dataset": {
         "image_obs_keys": {
             "primary": "first_view_image",
@@ -536,6 +553,12 @@ OXE_DATASET_METADATA = {
         "control_frequency": 15,
         "language_annotations": "Natual detailed instructions",
         "robot_morphology": "Single Arm",
+        "has_suboptimal": "No",
+    },
+    "aria_dataset": {
+        "control_frequency": 30,
+        "language_annotations": "Natural",
+        "robot_morphology": "Bi-Manual",
         "has_suboptimal": "No",
     },
 }

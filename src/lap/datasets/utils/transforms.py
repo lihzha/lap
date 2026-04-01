@@ -1484,6 +1484,62 @@ def maniskill_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
 
     return trajectory
 
+def aria_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
+    """Standardization transform for the Aria bimanual human hand dataset.
+
+    The Aria dataset contains egocentric camera data with bimanual hand pose estimates.
+    EE (palm) poses are in the camera frame with format [x, y, z, qw, qx, qy, qz].
+    Head pose gives the camera pose in world frame (same format).
+
+    Outputs:
+        observation.state: 12D [left_xyz(3), left_euler(3), right_xyz(3), right_euler(3)]
+                           in camera frame at the current timestep.
+        action: Same 12D absolute EE poses (will be converted to camera-frame-relative
+                deltas in AriaDataset.chunk_actions using head_pose).
+        head_pose: 7D [x, y, z, qw, qx, qy, qz] camera pose in world frame.
+        language_action: 12D movement deltas between consecutive camera-frame EE poses,
+                         used as a motion summary for language grounding.
+    """
+    from lap.datasets.utils.rotation_utils import quaternion_to_euler
+
+    obs = trajectory["observation"]
+
+    # EE poses in camera frame: [T, 7] = [x, y, z, qw, qx, qy, qz]
+    left_ee = tf.cast(obs["left_ee_pose"], tf.float32)
+    right_ee = tf.cast(obs["right_ee_pose"], tf.float32)
+
+    def wxyz_pose_to_xyz_euler(pose):
+        """Convert pose [x,y,z,qw,qx,qy,qz] -> [x,y,z,roll,pitch,yaw] (extrinsic XYZ)."""
+        xyz = pose[:, :3]
+        # wxyz -> xyzw format expected by quaternion_to_euler
+        quat_xyzw = tf.concat([pose[:, 4:7], pose[:, 3:4]], axis=-1)
+        euler = quaternion_to_euler(quat_xyzw)
+        return tf.concat([xyz, euler], axis=-1)
+
+    left_state = wxyz_pose_to_xyz_euler(left_ee)   # [T, 6]
+    right_state = wxyz_pose_to_xyz_euler(right_ee)  # [T, 6]
+
+    # State: bimanual EE poses in camera frame (12D)
+    state = tf.concat([left_state, right_state], axis=-1)  # [T, 12]
+    trajectory["observation"]["state"] = state
+
+    # Action: same absolute EE poses — AriaDataset.chunk_actions converts these to
+    # camera-frame-relative deltas using head_pose
+    trajectory["action"] = state  # [T, 12]
+
+    # head_pose: camera pose in world frame, needed for camera-frame action computation
+    trajectory["head_pose"] = tf.cast(obs["head_pose"], tf.float32)  # [T, 7]
+
+    # Language action: per-timestep movement deltas in camera frame (motion summary)
+    left_movement = compute_padded_movement_actions(left_state)   # [T, 6]
+    right_movement = compute_padded_movement_actions(right_state)  # [T, 6]
+    trajectory["language_action"] = tf.concat(
+        [left_movement, right_movement], axis=-1
+    )  # [T, 12]
+
+    return trajectory
+
+
 def human_dataset_transform(sample: dict[str, Any]) -> dict[str, Any]:
     """
     Transforms human data into the expected format by adding dummy actions.
@@ -1766,4 +1822,6 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "franka_rollout_dataset": franka_dataset_transform,
     "yam_rollout_dataset": yam_dataset_transform,
     "maniskill_dataset": maniskill_dataset_transform,
+    ### Aria human dataset
+    "aria_dataset": aria_dataset_transform,
 }

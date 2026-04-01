@@ -64,7 +64,7 @@ class CoTOutputs:
         """
         if "reasoning" not in data:
             return {
-                "actions": np.asarray(data["actions"][:, :7]),
+                "actions": np.asarray(data["actions"]),
                 "reasoning": None,
             }
 
