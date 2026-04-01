@@ -625,6 +625,8 @@ _CONFIGS = [
             pred_prob=0.9,
             primary_pred_prob=0.5,
             shuffle_buffer_size=1000,
+            enable_diverse_questions=False,
+            rlds_data_dir="gs://pi0-cot/OXE",
         ),
         model=lap_config.LAPConfig(
             action_dim=7,
