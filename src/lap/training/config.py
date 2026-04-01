@@ -619,6 +619,25 @@ _CONFIGS = [
         batch_size=2048,
     ),
     TrainConfig(
+        name="visualize",
+        data=RLDSDataConfig(
+            random_frame_prob=0.5,
+            pred_prob=0.9,
+            primary_pred_prob=0.5,
+            shuffle_buffer_size=1000,
+        ),
+        model=lap_config.LAPConfig(
+            action_dim=7,
+            action_horizon=16,
+            max_token_len=180,
+            enable_action_training=True,
+            stop_action_to_vlm_grad=True,
+            enable_prediction_training=True,
+        ),
+        fsdp_devices=4,
+        batch_size=16,
+    ),
+    TrainConfig(
         name="pi05_replicated",
         model=lap_config.LAPConfig(
             action_dim=7,
