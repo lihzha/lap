@@ -151,7 +151,6 @@ def eval_libero(args: Args) -> None:
                         single_action_or_chunk = np.asarray(response["actions"], dtype=np.float32)
                         if single_action_or_chunk.ndim == 1:
                             assert args.policy_type == PolicyType.LAP_AR
-                            print(response)
                             action_chunk = get_action_from_response(
                                 args.replan_steps, response, request["observation"]["state"]
                             )
@@ -170,7 +169,6 @@ def eval_libero(args: Args) -> None:
                     action = action_plan.popleft()
 
                     # Execute action in environment
-                    print(action[-1])
                     obs, _, done, _ = env.step(action.tolist())
                     if done:
                         task_successes += 1

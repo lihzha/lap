@@ -1492,13 +1492,15 @@ def aria_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
     Head pose gives the camera pose in world frame (same format).
 
     Outputs:
-        observation.state: 12D [left_xyz(3), left_euler(3), right_xyz(3), right_euler(3)]
-                           in camera frame at the current timestep.
-        action: Same 12D absolute EE poses (will be converted to camera-frame-relative
-                deltas in AriaDataset.chunk_actions using head_pose).
+        observation.state: 14D [left_xyz(3), left_euler(3), left_gripper(1),
+                                 right_xyz(3), right_euler(3), right_gripper(1)]
+                           EE poses in camera frame + binary gripper (1=open, 0=closed).
+        action: Same 14D — chunk_actions converts EE parts to camera-frame-relative
+                deltas; gripper is carried as the raw future state (no delta).
         head_pose: 7D [x, y, z, qw, qx, qy, qz] camera pose in world frame.
-        language_action: 12D movement deltas between consecutive camera-frame EE poses,
-                         used as a motion summary for language grounding.
+        language_action: 14D [left_dxyz(3), left_deuler(3), left_gripper(1),
+                               right_dxyz(3), right_deuler(3), right_gripper(1)]
+                         Per-timestep EE movement deltas + raw gripper state.
     """
     from lap.datasets.utils.rotation_utils import quaternion_to_euler
 
@@ -1516,26 +1518,33 @@ def aria_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
         euler = quaternion_to_euler(quat_xyzw)
         return tf.concat([xyz, euler], axis=-1)
 
-    left_state = wxyz_pose_to_xyz_euler(left_ee)   # [T, 6]
-    right_state = wxyz_pose_to_xyz_euler(right_ee)  # [T, 6]
+    left_pose = wxyz_pose_to_xyz_euler(left_ee)   # [T, 6]: xyz + euler
+    right_pose = wxyz_pose_to_xyz_euler(right_ee)  # [T, 6]: xyz + euler
 
-    # State: bimanual EE poses in camera frame (12D)
-    state = tf.concat([left_state, right_state], axis=-1)  # [T, 12]
+    # Gripper state from finger-tip proximity: True=open (1.0), False=closed (0.0)
+    left_gripper = tf.cast(obs["left_gripper_binary_hybrid"], tf.float32)[:, None]   # [T, 1]
+    right_gripper = tf.cast(obs["right_gripper_binary_hybrid"], tf.float32)[:, None]  # [T, 1]
+
+    # State: 14D = [left_xyz(3), left_euler(3), left_gripper(1),
+    #               right_xyz(3), right_euler(3), right_gripper(1)]
+    state = tf.concat(
+        [left_pose, left_gripper, right_pose, right_gripper], axis=-1
+    )  # [T, 14]
     trajectory["observation"]["state"] = state
 
-    # Action: same absolute EE poses — AriaDataset.chunk_actions converts these to
-    # camera-frame-relative deltas using head_pose
-    trajectory["action"] = state  # [T, 12]
+    # Action: same 14D absolute representation — AriaDataset.chunk_actions converts
+    # the EE parts to camera-frame-relative deltas; gripper is used as raw future state
+    trajectory["action"] = state  # [T, 14]
 
     # head_pose: camera pose in world frame, needed for camera-frame action computation
     trajectory["head_pose"] = tf.cast(obs["head_pose"], tf.float32)  # [T, 7]
 
-    # Language action: per-timestep movement deltas in camera frame (motion summary)
-    left_movement = compute_padded_movement_actions(left_state)   # [T, 6]
-    right_movement = compute_padded_movement_actions(right_state)  # [T, 6]
+    # Language action: EE movement deltas + raw gripper state (14D)
+    left_movement = compute_padded_movement_actions(left_pose)    # [T, 6]
+    right_movement = compute_padded_movement_actions(right_pose)  # [T, 6]
     trajectory["language_action"] = tf.concat(
-        [left_movement, right_movement], axis=-1
-    )  # [T, 12]
+        [left_movement, left_gripper, right_movement, right_gripper], axis=-1
+    )  # [T, 14]
 
     return trajectory
 
