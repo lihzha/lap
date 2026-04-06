@@ -102,7 +102,7 @@ class BaseDataset(ABC, TFConfigMixin, DatasetOptionsMixin, DummyStatisticsMixin)
         self.want_val = split == "val"
         self.dataset_name = dataset_name
         self.action_dim = action_dim * 2
-        self.state_dim = state_dim
+        self.state_dim = state_dim * 2
         self.action_horizon = action_horizon
         self.action_proprio_normalization_type = action_proprio_normalization_type
         self.standalone = standalone
