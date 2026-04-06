@@ -12,10 +12,12 @@ Action representation:
   frame at the current timestep t via:
     a^H_{t+i} = (T_t^device)^{-1} * T_{t+i}^device * p^H_{t+i}
   Then action deltas are computed from this camera-frame reference pose at t.
+  Gripper state is carried as the raw future value (no delta).
 
 State representation:
-  Current left and right hand palm poses in the camera frame, as xyz + euler (12D).
-  Converted to xyz + R6 (18D) for training.
+  Current left and right hand palm poses in the camera frame, as xyz + euler + gripper (14D):
+  [left_xyz(3), left_euler(3), left_gripper(1), right_xyz(3), right_euler(3), right_gripper(1)]
+  Converted to xyz + R6 + gripper (20D) for training.
 """
 
 from __future__ import annotations
@@ -40,12 +42,14 @@ class AriaDataset(SingleOXEDataset):
     """Dataset for Aria bimanual human egocentric manipulation data.
 
     Differences from single-arm robot datasets:
-    - Bimanual: left + right hand, each 6D pose (xyz + euler), no gripper
+    - Bimanual: left + right hand, each 7D (xyz + euler + gripper)
     - Egocentric only: primary image is the head camera, no wrist camera
     - Camera-frame relative actions: future EE poses are expressed relative to
-      the camera frame at the current timestep before computing deltas
-    - State: 12D (left_xyz + left_euler + right_xyz + right_euler),
-             converted to 18D (left_xyz + left_R6 + right_xyz + right_R6) for training
+      the camera frame at the current timestep before computing deltas;
+      gripper is carried as raw future state (no delta)
+    - State: 14D (left_xyz + left_euler + left_gripper + right_xyz + right_euler + right_gripper),
+             converted to 20D (left_xyz + left_R6 + left_gripper + right_xyz + right_R6 + right_gripper)
+    - Gripper: binary (1=open, 0=closed) from left/right_gripper_binary_hybrid
     """
 
     FORCE_NO_WRIST_IMAGE: bool = True
@@ -89,11 +93,12 @@ class AriaDataset(SingleOXEDataset):
         This implements:
           a^H_{t:t+k} = [(T_t^device)^{-1} * T_{t+i}^device * p^H_{t+i}]_{i=1}^k
         followed by delta computation (position subtraction + euler_diff).
+        Gripper is taken as the raw future state (no delta), same as robot convention.
         """
         traj_len = tf.shape(traj[action_key])[0]
 
-        # Gather sliding windows of absolute EE poses (xyz+euler, 12D)
-        # Shape: [T, action_horizon+1, 12]
+        # Gather sliding windows of absolute EE poses + gripper (14D)
+        # Shape: [T, action_horizon+1, 14]
         windowed_actions = gather_with_last_value_padding(
             data=traj[action_key],
             sequence_length=traj_len,
@@ -166,11 +171,19 @@ class AriaDataset(SingleOXEDataset):
 
             return tf.concat([pos_cam_t, euler_cam_t], axis=-1)  # [T, W, 6]
 
-        # Split and transform each hand
-        left_cam_t = transform_to_cam_t(windowed_actions[..., :6])   # [T, W, 6]
-        right_cam_t = transform_to_cam_t(windowed_actions[..., 6:12])  # [T, W, 6]
+        # Split each hand: EE pose (6D) and gripper (1D) are interleaved
+        # action layout: [left_xyz(3), left_euler(3), left_gripper(1),
+        #                 right_xyz(3), right_euler(3), right_gripper(1)] = 14D
+        left_ee_window  = windowed_actions[..., :6]     # [T, W, 6] left xyz+euler
+        left_gripper    = windowed_actions[..., 6:7]    # [T, W, 1] left gripper
+        right_ee_window = windowed_actions[..., 7:13]   # [T, W, 6] right xyz+euler
+        right_gripper   = windowed_actions[..., 13:14]  # [T, W, 1] right gripper
 
-        # Compute deltas: pose at t+i (indices 1..H) minus pose at t (index 0)
+        # Transform EE poses to camera frame at t
+        left_cam_t  = transform_to_cam_t(left_ee_window)   # [T, W, 6]
+        right_cam_t = transform_to_cam_t(right_ee_window)  # [T, W, 6]
+
+        # Compute EE deltas: pose at t+i (indices 1..H) minus pose at t (index 0)
         left_delta_pos = left_cam_t[:, 1:, :3] - left_cam_t[:, 0:1, :3]   # [T, H, 3]
         left_delta_euler = euler_diff(
             left_cam_t[:, 1:, 3:6], left_cam_t[:, 0:1, 3:6]
@@ -181,10 +194,18 @@ class AriaDataset(SingleOXEDataset):
             right_cam_t[:, 1:, 3:6], right_cam_t[:, 0:1, 3:6]
         )  # [T, H, 3]
 
-        # Final action chunks: [T, action_horizon, 12]
-        # Format: [left_dxyz, left_deuler, right_dxyz, right_deuler]
+        # Gripper: raw future states at t..t+H-1 (no delta, same convention as robot data)
+        left_gripper_chunk  = left_gripper[:, :-1, :]   # [T, H, 1]
+        right_gripper_chunk = right_gripper[:, :-1, :]  # [T, H, 1]
+
+        # Final action chunks: [T, action_horizon, 14]
+        # Format: [left_dxyz(3), left_deuler(3), left_gripper(1),
+        #          right_dxyz(3), right_deuler(3), right_gripper(1)]
         traj[action_key] = tf.concat(
-            [left_delta_pos, left_delta_euler, right_delta_pos, right_delta_euler],
+            [
+                left_delta_pos, left_delta_euler, left_gripper_chunk,
+                right_delta_pos, right_delta_euler, right_gripper_chunk,
+            ],
             axis=-1,
         )
 
@@ -202,24 +223,28 @@ class AriaDataset(SingleOXEDataset):
         """Override to handle bimanual state correctly.
 
         The standard state_euler_to_rot6d only converts indices [3:6] (left euler).
-        For bimanual 12D state [l_xyz(3), l_euler(3), r_xyz(3), r_euler(3)],
-        we also need to convert [9:12] (right euler) to R6.
-        Result: 18D = [l_xyz(3), l_R6(6), r_xyz(3), r_R6(6)].
+        For bimanual 14D state [l_xyz(3), l_euler(3), l_gripper(1),
+                                  r_xyz(3), r_euler(3), r_gripper(1)],
+        we also need to convert [10:13] (right euler) to R6, keeping gripper dims.
+        Result: 20D = [l_xyz(3), l_R6(6), l_gripper(1), r_xyz(3), r_R6(6), r_gripper(1)].
         """
 
         # Step 1: Convert both hands' euler to R6 for continuous rotation representation
         def bimanual_state_euler_to_rot6d(traj):
             def convert(s):
-                # s: [T, 12] = [l_xyz(3), l_euler(3), r_xyz(3), r_euler(3)]
+                # s: [T, 14] = [l_xyz(3), l_euler(3), l_gripper(1),
+                #               r_xyz(3), r_euler(3), r_gripper(1)]
                 return tf.concat(
                     [
-                        s[:, :3],                   # left xyz
-                        euler_to_rot6d(s[:, 3:6]),  # left R6
-                        s[:, 6:9],                  # right xyz
-                        euler_to_rot6d(s[:, 9:12]), # right R6
+                        s[:, :3],                    # left xyz
+                        euler_to_rot6d(s[:, 3:6]),   # left R6
+                        s[:, 6:7],                   # left gripper
+                        s[:, 7:10],                  # right xyz
+                        euler_to_rot6d(s[:, 10:13]), # right R6
+                        s[:, 13:14],                 # right gripper
                     ],
                     axis=-1,
-                )  # [T, 18]
+                )  # [T, 20]
 
             traj["observation"][state_key] = convert(traj["observation"][state_key])
             traj["raw_state"] = convert(traj["raw_state"])
