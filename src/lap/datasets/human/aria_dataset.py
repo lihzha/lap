@@ -3,19 +3,26 @@
 Aria data is egocentric video of bimanual hand manipulation, captured with
 an Aria head-mounted device. Each timestep has:
 - A first-person (egocentric) RGB image
-- Left and right hand palm poses in the camera frame [x, y, z, qw, qx, qy, qz]
+- Left and right hand palm poses in the WORLD frame [x, y, z, qw, qx, qy, qz]
 - Head (camera) pose in world frame [x, y, z, qw, qx, qy, qz]
 - Language instruction
 
+The world frame is fixed at the start of each recording session.
+
 Action representation:
-  For each future timestep t+i, the EE pose is first expressed in the camera
-  frame at the current timestep t via:
-    a^H_{t+i} = (T_t^device)^{-1} * T_{t+i}^device * p^H_{t+i}
-  Then action deltas are computed from this camera-frame reference pose at t.
-  Gripper state is carried as the raw future value (no delta).
+  All future EE poses in a chunk [t+1 .. t+H] are expressed in the semantic
+  camera frame at the current timestep t:
+    pos_cam_t = R_t^T @ (pos_world - cam_pos_t)
+  then a semantic alignment P is applied so that dim0=forward (optical axis),
+  dim1=left, dim2=up.  Action deltas are then computed from the current-step
+  pose in this semantic frame.  Gripper state is the raw future value (no delta).
+
+  Semantic camera frame (Aria RGB camera: X=right, Y=down, Z=forward):
+    P = [[0, 0, 1], [-1, 0, 0], [0, -1, 0]]
 
 State representation:
-  Current left and right hand palm poses in the camera frame, as xyz + euler + gripper (14D):
+  Current left and right hand palm poses expressed in the semantic camera frame
+  at each timestep t, as xyz + euler + gripper (14D):
   [left_xyz(3), left_euler(3), left_gripper(1), right_xyz(3), right_euler(3), right_gripper(1)]
   Converted to xyz + R6 + gripper (20D) for training.
 """
@@ -82,136 +89,116 @@ class AriaDataset(SingleOXEDataset):
 
         self.dataset = self.dataset.traj_map(restructure, self.num_parallel_calls)
 
-    def chunk_actions(self, traj, action_horizon: int, action_key: str = "actions"):
-        """Chunk actions with camera-frame relative transformation.
+    def chunk_actions(
+        self,
+        traj,
+        action_horizon: int,
+        action_key: str = "actions",
+        state_key: str = "state",
+    ):
+        """Chunk actions with world-to-semantic-camera-frame transformation.
 
-        For each timestep t and each future step i in [1, action_horizon]:
-          1. Express p^H_{t+i} (EE pose in cam frame at t+i) in world frame using head_pose_{t+i}
-          2. Re-express in cam frame at t using head_pose_t
-          3. Compute delta from current cam-frame pose at t
+        EE poses (action and state) are in the world frame.  For each timestep t:
+          - State: expressed in the semantic camera frame at t.
+          - Action chunk [t+1 .. t+H]: all expressed in the semantic camera frame
+            at t, then deltas from the current pose are computed.
 
-        This implements:
-          a^H_{t:t+k} = [(T_t^device)^{-1} * T_{t+i}^device * p^H_{t+i}]_{i=1}^k
-        followed by delta computation (position subtraction + euler_diff).
-        Gripper is taken as the raw future state (no delta), same as robot convention.
+        Semantic camera frame (Aria RGB: X=right, Y=down, Z=forward):
+          P = [[0, 0, 1], [-1, 0, 0], [0, -1, 0]]
+          dim0 = camera +Z  (forward / optical axis)
+          dim1 = camera −X  (left)
+          dim2 = camera −Y  (up)
+
+        Gripper is carried as the raw future state (no delta), same as robot data.
         """
         traj_len = tf.shape(traj[action_key])[0]
 
-        # Gather sliding windows of absolute EE poses + gripper (14D)
-        # Shape: [T, action_horizon+1, 14]
+        # Semantic alignment: camera (X=right, Y=down, Z=forward) → (fwd=0, left=1, up=2)
+        P  = tf.constant([[0., 0., 1.], [-1., 0., 0.], [0., -1., 0.]], dtype=tf.float32)
+        PT = tf.transpose(P)  # P^T for similarity transforms on rotation matrices
+
+        # ── Per-timestep camera geometry ──────────────────────────────────────
+        # head_pose: [T, 7] = [x, y, z, qw, qx, qy, qz]  (camera in world frame)
+        head_pos_all   = traj["head_pose"][:, :3]   # [T, 3]
+        hq_wxyz        = traj["head_pose"][:, 3:7]  # [T, 4]
+        hq_xyzw        = tf.concat([hq_wxyz[:, 1:4], hq_wxyz[:, 0:1]], axis=-1)
+        R_c2w          = quaternion_to_rotation_matrix(hq_xyzw)  # [T, 3, 3]  cam→world
+
+        # For windowed ops, broadcast the reference-frame rotation/translation
+        R_t = R_c2w[:, None, :, :]       # [T, 1, 3, 3]  broadcast over window dim
+        t_t = head_pos_all[:, None, :]   # [T, 1, 3]
+
+        # ── Transform state: world → semantic cam frame at each t ─────────────
+        def _to_semantic_per_t(pos_w, euler_w):
+            """[T,3], [T,3] → pos_s [T,3], euler_s [T,3] in semantic cam frame."""
+            # pos_cam = R_c2w^T @ (pos_world − cam_pos)
+            pos_cam  = tf.einsum("tji,tj->ti", R_c2w, pos_w - head_pos_all)
+            pos_s    = tf.einsum("ij,tj->ti",  P,     pos_cam)
+
+            R_ee_w   = euler_to_rotation_matrix(euler_w)              # [T,3,3]
+            R_ee_cam = tf.einsum("tji,tjk->tik", R_c2w, R_ee_w)      # R^T @ R_ee_w
+            R_ee_s   = tf.einsum("ij,tjk,kl->til", P, R_ee_cam, PT)  # P @ R_ee_cam @ P^T
+            return pos_s, rotation_matrix_to_euler(R_ee_s)
+
+        def _transform_state(s14):
+            lp, le = _to_semantic_per_t(s14[:, :3],   s14[:, 3:6])
+            rp, re = _to_semantic_per_t(s14[:, 7:10], s14[:, 10:13])
+            return tf.concat([lp, le, s14[:, 6:7], rp, re, s14[:, 13:14]], axis=-1)
+
+        traj["observation"][state_key] = _transform_state(traj["observation"][state_key])
+        traj["raw_state"]              = _transform_state(traj["raw_state"])
+
+        # ── Gather sliding windows of world-frame EE poses ────────────────────
         windowed_actions = gather_with_last_value_padding(
             data=traj[action_key],
             sequence_length=traj_len,
             window_size=action_horizon + 1,
-        )
+        )  # [T, W, 14]
 
-        # Gather sliding windows of head poses [x,y,z,qw,qx,qy,qz]
-        # Shape: [T, action_horizon+1, 7]
-        windowed_head_poses = gather_with_last_value_padding(
-            data=traj["head_pose"],
-            sequence_length=traj_len,
-            window_size=action_horizon + 1,
-        )
+        # ── Transform windowed poses: world → semantic cam frame at t ─────────
+        def _to_semantic_windowed(ee_xyz_euler):
+            """[T,W,6] world frame → [T,W,6] semantic cam frame at t."""
+            pos_w   = ee_xyz_euler[..., :3]   # [T, W, 3]
+            euler_w = ee_xyz_euler[..., 3:6]  # [T, W, 3]
 
-        # Build rotation matrices R_cam_to_world for each (timestep, window) pair
-        # head_pose format: [x, y, z, qw, qx, qy, qz]
-        head_pos = windowed_head_poses[..., :3]         # [T, W, 3]
-        head_quat_wxyz = windowed_head_poses[..., 3:7]  # [T, W, 4]
-        # Convert wxyz -> xyzw for quaternion_to_rotation_matrix
-        head_quat_xyzw = tf.concat(
-            [head_quat_wxyz[..., 1:4], head_quat_wxyz[..., 0:1]], axis=-1
-        )
-        R_cam_to_world = quaternion_to_rotation_matrix(head_quat_xyzw)  # [T, W, 3, 3]
+            # pos_cam_t = R_t^T @ (pos_world − t_t);  R_t broadcasts over W
+            pos_cam_t = tf.einsum("...ji,...j->...i", R_t, pos_w - t_t)
+            pos_s     = tf.einsum("ij,...j->...i",    P,   pos_cam_t)
 
-        # Reference frame: camera at timestep t (window index 0)
-        R_t = R_cam_to_world[:, 0:1, :, :]  # [T, 1, 3, 3]  (R_cam_t -> world)
-        t_t = head_pos[:, 0:1, :]            # [T, 1, 3]     (translation of cam_t in world)
+            R_ee_w   = euler_to_rotation_matrix(euler_w)               # [T,W,3,3]
+            R_ee_cam = tf.einsum("...ji,...jk->...ik", R_t,  R_ee_w)  # R_t^T @ R_ee_w
+            R_ee_s   = tf.einsum("ij,...jk,kl->...il", P, R_ee_cam, PT)
+            return tf.concat([pos_s, rotation_matrix_to_euler(R_ee_s)], axis=-1)
 
-        def transform_to_cam_t(ee_xyz_euler):
-            """Re-express EE poses from their per-step camera frames into cam frame at t.
+        # action layout: [l_xyz(3), l_euler(3), l_grip(1), r_xyz(3), r_euler(3), r_grip(1)]
+        left_ee_w  = windowed_actions[..., :6]     # [T, W, 6]
+        left_grip  = windowed_actions[..., 6:7]    # [T, W, 1]
+        right_ee_w = windowed_actions[..., 7:13]   # [T, W, 6]
+        right_grip = windowed_actions[..., 13:14]  # [T, W, 1]
 
-            Args:
-                ee_xyz_euler: [T, W, 6] EE poses in camera frame at each t+i (xyz + euler)
+        left_s  = _to_semantic_windowed(left_ee_w)   # [T, W, 6]
+        right_s = _to_semantic_windowed(right_ee_w)  # [T, W, 6]
 
-            Returns:
-                [T, W, 6] EE poses expressed in camera frame at time t
-            """
-            pos_cam = ee_xyz_euler[..., :3]    # [T, W, 3]
-            euler_cam = ee_xyz_euler[..., 3:6]  # [T, W, 3]
+        # Deltas: future steps (1..H) minus current step (0) in semantic cam frame
+        left_delta_pos   = left_s[:, 1:, :3] - left_s[:, 0:1, :3]              # [T,H,3]
+        left_delta_euler = euler_diff(left_s[:, 1:, 3:6], left_s[:, 0:1, 3:6]) # [T,H,3]
+        right_delta_pos   = right_s[:, 1:, :3] - right_s[:, 0:1, :3]           # [T,H,3]
+        right_delta_euler = euler_diff(right_s[:, 1:, 3:6], right_s[:, 0:1, 3:6])
 
-            # EE rotation matrix in cam frame at t+i
-            R_ee_cam = euler_to_rotation_matrix(euler_cam)  # [T, W, 3, 3]
-
-            # Transform EE position to world frame:
-            #   pos_world = R_cam_to_world @ pos_cam + t_cam
-            pos_world = (
-                tf.einsum("...ij,...j->...i", R_cam_to_world, pos_cam) + head_pos
-            )  # [T, W, 3]
-
-            # Transform EE rotation to world frame:
-            #   R_ee_world = R_cam_to_world @ R_ee_cam
-            R_ee_world = tf.einsum(
-                "...ij,...jk->...ik", R_cam_to_world, R_ee_cam
-            )  # [T, W, 3, 3]
-
-            # Transform EE position to cam_t frame:
-            #   pos_cam_t = R_t^T @ (pos_world - t_t)
-            # Using einsum with swapped indices for transpose: 'ji' instead of 'ij'
-            pos_cam_t = tf.einsum(
-                "...ji,...j->...i", R_t, pos_world - t_t
-            )  # [T, W, 3]
-
-            # Transform EE rotation to cam_t frame:
-            #   R_ee_cam_t = R_t^T @ R_ee_world
-            R_ee_cam_t = tf.einsum(
-                "...ji,...jk->...ik", R_t, R_ee_world
-            )  # [T, W, 3, 3]
-
-            euler_cam_t = rotation_matrix_to_euler(R_ee_cam_t)  # [T, W, 3]
-
-            return tf.concat([pos_cam_t, euler_cam_t], axis=-1)  # [T, W, 6]
-
-        # Split each hand: EE pose (6D) and gripper (1D) are interleaved
-        # action layout: [left_xyz(3), left_euler(3), left_gripper(1),
-        #                 right_xyz(3), right_euler(3), right_gripper(1)] = 14D
-        left_ee_window  = windowed_actions[..., :6]     # [T, W, 6] left xyz+euler
-        left_gripper    = windowed_actions[..., 6:7]    # [T, W, 1] left gripper
-        right_ee_window = windowed_actions[..., 7:13]   # [T, W, 6] right xyz+euler
-        right_gripper   = windowed_actions[..., 13:14]  # [T, W, 1] right gripper
-
-        # Transform EE poses to camera frame at t
-        left_cam_t  = transform_to_cam_t(left_ee_window)   # [T, W, 6]
-        right_cam_t = transform_to_cam_t(right_ee_window)  # [T, W, 6]
-
-        # Compute EE deltas: pose at t+i (indices 1..H) minus pose at t (index 0)
-        left_delta_pos = left_cam_t[:, 1:, :3] - left_cam_t[:, 0:1, :3]   # [T, H, 3]
-        left_delta_euler = euler_diff(
-            left_cam_t[:, 1:, 3:6], left_cam_t[:, 0:1, 3:6]
-        )  # [T, H, 3]
-
-        right_delta_pos = right_cam_t[:, 1:, :3] - right_cam_t[:, 0:1, :3]  # [T, H, 3]
-        right_delta_euler = euler_diff(
-            right_cam_t[:, 1:, 3:6], right_cam_t[:, 0:1, 3:6]
-        )  # [T, H, 3]
-
-        # Gripper: raw future states at t..t+H-1 (no delta, same convention as robot data)
-        left_gripper_chunk  = left_gripper[:, :-1, :]   # [T, H, 1]
-        right_gripper_chunk = right_gripper[:, :-1, :]  # [T, H, 1]
+        left_grip_chunk  = left_grip[:, :-1, :]   # [T, H, 1]
+        right_grip_chunk = right_grip[:, :-1, :]  # [T, H, 1]
 
         # Final action chunks: [T, action_horizon, 14]
-        # Format: [left_dxyz(3), left_deuler(3), left_gripper(1),
-        #          right_dxyz(3), right_deuler(3), right_gripper(1)]
+        # Format: [l_dxyz(3), l_deuler(3), l_grip(1), r_dxyz(3), r_deuler(3), r_grip(1)]
         traj[action_key] = tf.concat(
             [
-                left_delta_pos, left_delta_euler, left_gripper_chunk,
-                right_delta_pos, right_delta_euler, right_gripper_chunk,
+                left_delta_pos, left_delta_euler, left_grip_chunk,
+                right_delta_pos, right_delta_euler, right_grip_chunk,
             ],
             axis=-1,
         )
 
-        # head_pose is no longer needed after action chunking
         traj.pop("head_pose", None)
-
         return traj
 
     def apply_traj_transforms(
@@ -229,7 +216,21 @@ class AriaDataset(SingleOXEDataset):
         Result: 20D = [l_xyz(3), l_R6(6), l_gripper(1), r_xyz(3), r_R6(6), r_gripper(1)].
         """
 
-        # Step 1: Convert both hands' euler to R6 for continuous rotation representation
+        # Step 1: World → semantic camera frame transformation + action chunking.
+        # chunk_actions uses head_pose (then removes it) and outputs the state in
+        # euler format so that Step 2 can convert to R6.
+        self.dataset = self.dataset.traj_map(
+            lambda traj: self.chunk_actions(
+                traj,
+                action_horizon=action_horizon,
+                action_key=action_key,
+                state_key=state_key,
+            ),
+            self.num_parallel_calls,
+        )
+
+        # Step 2: Convert both hands' euler to R6 (must run after chunk_actions so
+        # the state is already in the semantic camera frame, still in euler format).
         def bimanual_state_euler_to_rot6d(traj):
             def convert(s):
                 # s: [T, 14] = [l_xyz(3), l_euler(3), l_gripper(1),
@@ -252,14 +253,6 @@ class AriaDataset(SingleOXEDataset):
 
         self.dataset = self.dataset.traj_map(
             bimanual_state_euler_to_rot6d, self.num_parallel_calls
-        )
-
-        # Step 2: Camera-frame relative action chunking (uses and removes head_pose)
-        self.dataset = self.dataset.traj_map(
-            lambda traj: self.chunk_actions(
-                traj, action_horizon=action_horizon, action_key=action_key
-            ),
-            self.num_parallel_calls,
         )
 
         # Step 3: Pad actions and state to fixed global dimensions

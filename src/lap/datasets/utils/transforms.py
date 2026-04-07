@@ -1488,60 +1488,109 @@ def aria_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
     """Standardization transform for the Aria bimanual human hand dataset.
 
     The Aria dataset contains egocentric camera data with bimanual hand pose estimates.
-    EE (palm) poses are in the camera frame with format [x, y, z, qw, qx, qy, qz].
-    Head pose gives the camera pose in world frame (same format).
+    EE (palm) poses are in the WORLD frame (fixed frame defined at recording start)
+    with format [x, y, z, qw, qx, qy, qz].  Head pose is in the same world frame.
+
+    AriaDataset.chunk_actions performs the world → semantic camera frame conversion
+    for state and action chunks.  Here we pre-compute language_action in the semantic
+    camera frame so that summarize_bimanual_numeric_actions produces correct text.
+
+    Semantic camera frame (Aria RGB: X=right, Y=down, Z=forward):
+      dim0 = camera +Z  (forward / optical axis)
+      dim1 = camera −X  (left)
+      dim2 = camera −Y  (up)
 
     Outputs:
-        observation.state: 14D [left_xyz(3), left_euler(3), left_gripper(1),
-                                 right_xyz(3), right_euler(3), right_gripper(1)]
-                           EE poses in camera frame + binary gripper (1=open, 0=closed).
-        action: Same 14D — chunk_actions converts EE parts to camera-frame-relative
-                deltas; gripper is carried as the raw future state (no delta).
-        head_pose: 7D [x, y, z, qw, qx, qy, qz] camera pose in world frame.
-        language_action: 14D [left_dxyz(3), left_deuler(3), left_gripper(1),
-                               right_dxyz(3), right_deuler(3), right_gripper(1)]
-                         Per-timestep EE movement deltas + raw gripper state.
+        observation.state: 14D world-frame EE poses
+                           [left_xyz(3), left_euler(3), left_gripper(1),
+                            right_xyz(3), right_euler(3), right_gripper(1)]
+        action: Same 14D world-frame poses; chunk_actions converts to semantic
+                camera-frame deltas.
+        head_pose: [T, 7] camera pose in world frame.
+        language_action: 14D per-step EE movements in semantic camera frame
+                         [left_dxyz(3), left_deuler(3), left_gripper(1),
+                          right_dxyz(3), right_deuler(3), right_gripper(1)]
     """
-    from lap.datasets.utils.rotation_utils import quaternion_to_euler
+    from lap.datasets.utils.rotation_utils import (
+        euler_to_rotation_matrix,
+        quaternion_to_euler,
+        quaternion_to_rotation_matrix,
+        rotation_matrix_to_euler,
+    )
 
     obs = trajectory["observation"]
 
-    # EE poses in camera frame: [T, 7] = [x, y, z, qw, qx, qy, qz]
-    left_ee = tf.cast(obs["left_ee_pose"], tf.float32)
+    # EE poses in world frame: [T, 7] = [x, y, z, qw, qx, qy, qz]
+    left_ee  = tf.cast(obs["left_ee_pose"],  tf.float32)
     right_ee = tf.cast(obs["right_ee_pose"], tf.float32)
 
     def wxyz_pose_to_xyz_euler(pose):
-        """Convert pose [x,y,z,qw,qx,qy,qz] -> [x,y,z,roll,pitch,yaw] (extrinsic XYZ)."""
+        """Convert [x,y,z,qw,qx,qy,qz] → [x,y,z,roll,pitch,yaw] (extrinsic XYZ)."""
         xyz = pose[:, :3]
-        # wxyz -> xyzw format expected by quaternion_to_euler
         quat_xyzw = tf.concat([pose[:, 4:7], pose[:, 3:4]], axis=-1)
-        euler = quaternion_to_euler(quat_xyzw)
-        return tf.concat([xyz, euler], axis=-1)
+        return tf.concat([xyz, quaternion_to_euler(quat_xyzw)], axis=-1)
 
-    left_pose = wxyz_pose_to_xyz_euler(left_ee)   # [T, 6]: xyz + euler
-    right_pose = wxyz_pose_to_xyz_euler(right_ee)  # [T, 6]: xyz + euler
+    left_pose  = wxyz_pose_to_xyz_euler(left_ee)   # [T, 6] world frame
+    right_pose = wxyz_pose_to_xyz_euler(right_ee)  # [T, 6] world frame
 
-    # Gripper state from finger-tip proximity: True=open (1.0), False=closed (0.0)
-    left_gripper = tf.cast(obs["left_gripper_binary_hybrid"], tf.float32)[:, None]   # [T, 1]
-    right_gripper = tf.cast(obs["right_gripper_binary_hybrid"], tf.float32)[:, None]  # [T, 1]
+    left_gripper  = tf.cast(obs["left_gripper_binary_hybrid"],  tf.float32)[:, None]  # [T,1]
+    right_gripper = tf.cast(obs["right_gripper_binary_hybrid"], tf.float32)[:, None]  # [T,1]
 
-    # State: 14D = [left_xyz(3), left_euler(3), left_gripper(1),
-    #               right_xyz(3), right_euler(3), right_gripper(1)]
-    state = tf.concat(
-        [left_pose, left_gripper, right_pose, right_gripper], axis=-1
-    )  # [T, 14]
+    # State: 14D world-frame EE poses (chunk_actions converts to semantic cam frame)
+    state = tf.concat([left_pose, left_gripper, right_pose, right_gripper], axis=-1)  # [T,14]
     trajectory["observation"]["state"] = state
-
-    # Action: same 14D absolute representation — AriaDataset.chunk_actions converts
-    # the EE parts to camera-frame-relative deltas; gripper is used as raw future state
     trajectory["action"] = state  # [T, 14]
 
-    # head_pose: camera pose in world frame, needed for camera-frame action computation
-    trajectory["head_pose"] = tf.cast(obs["head_pose"], tf.float32)  # [T, 7]
+    # head_pose: camera pose in world frame [T, 7]
+    head_pose = tf.cast(obs["head_pose"], tf.float32)
+    trajectory["head_pose"] = head_pose
 
-    # Language action: EE movement deltas + raw gripper state (14D)
-    left_movement = compute_padded_movement_actions(left_pose)    # [T, 6]
-    right_movement = compute_padded_movement_actions(right_pose)  # [T, 6]
+    # ── Language action: per-step EE movements in semantic camera frame ────────
+    # Semantic alignment P: camera (X=right, Y=down, Z=forward) → (fwd=0,left=1,up=2)
+    P  = tf.constant([[0., 0., 1.], [-1., 0., 0.], [0., -1., 0.]], dtype=tf.float32)
+    PT = tf.transpose(P)
+
+    head_quat_wxyz = head_pose[:, 3:7]
+    head_quat_xyzw = tf.concat([head_quat_wxyz[:, 1:4], head_quat_wxyz[:, 0:1]], axis=-1)
+    R_c2w = quaternion_to_rotation_matrix(head_quat_xyzw)  # [T, 3, 3]  cam→world
+
+    def compute_semantic_movement(xyz_euler):
+        """Per-step EE movements in semantic camera frame, zero-padded at the end.
+
+        For each t in [0, T-2]:
+          translation: P @ R_c2w[t]^T @ (pos[t+1] − pos[t])
+          rotation:    P @ R_c2w[t]^T @ (R[t+1] @ R[t]^T) @ R_c2w[t] @ P^T  → euler
+
+        Args:
+            xyz_euler: [T, 6] world-frame EE poses [x, y, z, roll, pitch, yaw]
+        Returns:
+            [T, 6] movements in semantic camera frame (last row is zeros)
+        """
+        R_cam_t = R_c2w[:-1]  # [T-1, 3, 3]  camera at t (not t+1)
+
+        # Translation delta in semantic cam frame
+        delta_pos_w  = xyz_euler[1:, :3] - xyz_euler[:-1, :3]          # [T-1, 3]
+        delta_pos_c  = tf.einsum("tji,tj->ti", R_cam_t, delta_pos_w)   # R^T @ delta
+        delta_pos_s  = tf.einsum("ij,tj->ti",  P,       delta_pos_c)   # P @ delta_c
+
+        # Rotation delta in semantic cam frame:
+        #   R_diff_world  = R[t+1] @ R[t]^T
+        #   R_diff_cam    = R_cam^T @ R_diff_world @ R_cam
+        #   R_diff_semantic = P @ R_diff_cam @ P^T
+        R_w_t   = euler_to_rotation_matrix(xyz_euler[:-1, 3:6])  # [T-1,3,3]
+        R_w_tp1 = euler_to_rotation_matrix(xyz_euler[1:,  3:6])  # [T-1,3,3]
+        R_diff_w = tf.einsum("tij,tkj->tik", R_w_tp1, R_w_t)    # R_{t+1} @ R_t^T
+        R_diff_c = tf.einsum("tji,tjk,tkl->til", R_cam_t, R_diff_w, R_cam_t)
+        R_diff_s = tf.einsum("ij,tjk,kl->til", P, R_diff_c, PT)
+        euler_s  = rotation_matrix_to_euler(R_diff_s)             # [T-1, 3]
+
+        movements = tf.concat([delta_pos_s, euler_s], axis=-1)    # [T-1, 6]
+        return tf.concat(
+            [movements, tf.zeros([1, 6], dtype=movements.dtype)], axis=0
+        )  # [T, 6]
+
+    left_movement  = compute_semantic_movement(left_pose)   # [T, 6]
+    right_movement = compute_semantic_movement(right_pose)  # [T, 6]
     trajectory["language_action"] = tf.concat(
         [left_movement, left_gripper, right_movement, right_gripper], axis=-1
     )  # [T, 14]

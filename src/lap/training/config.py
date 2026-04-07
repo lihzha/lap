@@ -468,7 +468,7 @@ class EmaScheduleChoice:
 
     Example:
         # From command line:
-        python -m lap.training.train --config lap_droid_lap_v4 \\
+        python scripts/train.py --config lap \\
             --ema_schedule_choice.kind delayed \\
             --ema_schedule_choice.start_step 10000 \\
             --ema_schedule_choice.decay 0.999
