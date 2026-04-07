@@ -29,6 +29,7 @@ class LAPConfig(_model.BaseModelConfig):
     action_dim: int = 7
     action_horizon: int = 16
     max_token_len: int = 220
+    state_dim: int = 10
 
     # if verbose_mode=True, log per sample metrics
     verbose_mode: bool = False
