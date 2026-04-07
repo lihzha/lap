@@ -173,12 +173,21 @@ def _decode_captions(obs, tokenizer) -> list[str]:
     return out
 
 
-def _format_action_array(actions: np.ndarray, max_steps: int = 3) -> str:
+def _format_single_arm(actions: np.ndarray) -> str:
+    """Format a single-arm action chunk [H, 7] as a human-readable string."""
+    actions_sum = np.sum(actions[:, :7], axis=0)
+    actions_sum[-1] = actions[-1, 6]
+    act = actions_sum
+    return f"xyz=({act[0]:.2f},{act[1]:.2f},{act[2]:.2f}) rpy=({act[3]:.2f},{act[4]:.2f},{act[5]:.2f}) g={act[6]:.2f}"
+
+
+def _format_action_array(actions: np.ndarray, max_steps: int = 3, is_bimanual: bool = False) -> str:
     """Format action array as a human-readable string.
 
     Args:
         actions: Action array of shape [action_horizon, action_dim] or [action_dim]
         max_steps: Maximum number of timesteps to display
+        is_bimanual: Whether actions are bimanual (14D: left 0-6, right 7-13)
 
     Returns:
         Formatted string representation
@@ -192,31 +201,20 @@ def _format_action_array(actions: np.ndarray, max_steps: int = 3) -> str:
 
     horizon, action_dim = actions.shape
 
-    # Format first few timesteps
-    lines = []
-    actions_sum = np.sum(actions[:, :7], axis=0)
-    actions_sum[-1] = actions[-1, 6]
-    # for t in range(min(max_steps, horizon)):
-    #     # Show first 7 dims (xyz, rpy, gripper) for compactness
-    #     act = actions[t, :7]
-    #     line = f"t{t}: xyz=({act[0]:.2f},{act[1]:.2f},{act[2]:.2f}) rpy=({act[3]:.2f},{act[4]:.2f},{act[5]:.2f}) g={act[6]:.2f}"
-    #     lines.append(line)
+    if is_bimanual and action_dim >= 14:
+        left = _format_single_arm(actions[:, :7])
+        right = _format_single_arm(actions[:, 7:14])
+        return f"Left arm: {left} | Right arm: {right}"
 
-    act = actions_sum
-    line = f"xyz=({act[0]:.2f},{act[1]:.2f},{act[2]:.2f}) rpy=({act[3]:.2f},{act[4]:.2f},{act[5]:.2f}) g={act[6]:.2f}"
-
-    # if horizon > max_steps:
-    #     lines.append(f"... ({horizon - max_steps} more steps)")
-
-    # return " | ".join(lines)
-    return line
+    return _format_single_arm(actions)
 
 
-def _extract_gt_actions(batch) -> list[str]:
+def _extract_gt_actions(batch, obs=None) -> list[str]:
     """Extract and format ground truth actions per example.
 
     Args:
         batch: Tuple of (observation, actions) from dataloader
+        obs: Observation object (used to check is_bimanual per example)
 
     Returns:
         List of formatted action strings, one per batch element
@@ -228,6 +226,10 @@ def _extract_gt_actions(batch) -> list[str]:
     if actions is None:
         return []
 
+    is_bimanual_flags = None
+    if obs is not None and hasattr(obs, "is_bimanual") and obs.is_bimanual is not None:
+        is_bimanual_flags = _safe_device_get(obs.is_bimanual)
+
     out: list[str] = []
     batch_size = actions.shape[0]
 
@@ -235,7 +237,8 @@ def _extract_gt_actions(batch) -> list[str]:
         # Extract actions for this example
         # Shape: [action_horizon, action_dim] or [action_dim]
         action_chunk = actions[i]
-        formatted = _format_action_array(action_chunk, max_steps=2)
+        is_bimanual = bool(is_bimanual_flags[i]) if is_bimanual_flags is not None else False
+        formatted = _format_action_array(action_chunk, max_steps=2, is_bimanual=is_bimanual)
         out.append(formatted)
 
     return out
@@ -500,7 +503,7 @@ def main(config: _config.TrainConfig):
         # Extract captions (for VQA datasets)
         caption_texts = _decode_captions(obs, tok)
         # Extract ground truth actions
-        gt_action_texts = _extract_gt_actions(batch)
+        gt_action_texts = _extract_gt_actions(batch, obs)
 
         start_imgs = _safe_device_get(obs.images["base_0_rgb"])
         end_imgs = _safe_device_get(obs.images["left_wrist_0_rgb"])
