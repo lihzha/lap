@@ -1511,12 +1511,7 @@ def aria_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
                          [left_dxyz(3), left_deuler(3), left_gripper(1),
                           right_dxyz(3), right_deuler(3), right_gripper(1)]
     """
-    from lap.datasets.utils.rotation_utils import (
-        euler_to_rotation_matrix,
-        quaternion_to_euler,
-        quaternion_to_rotation_matrix,
-        rotation_matrix_to_euler,
-    )
+    from lap.datasets.utils.rotation_utils import quaternion_to_euler
 
     obs = trajectory["observation"]
 
@@ -1545,52 +1540,13 @@ def aria_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
     head_pose = tf.cast(obs["head_pose"], tf.float32)
     trajectory["head_pose"] = head_pose
 
-    # ── Language action: per-step EE movements in semantic camera frame ────────
-    # Semantic alignment P: camera (X=right, Y=down, Z=forward) → (fwd=0,left=1,up=2)
-    P  = tf.constant([[0., 0., 1.], [-1., 0., 0.], [0., -1., 0.]], dtype=tf.float32)
-    PT = tf.transpose(P)
-
-    head_quat_wxyz = head_pose[:, 3:7]
-    head_quat_xyzw = tf.concat([head_quat_wxyz[:, 1:4], head_quat_wxyz[:, 0:1]], axis=-1)
-    R_c2w = quaternion_to_rotation_matrix(head_quat_xyzw)  # [T, 3, 3]  cam→world
-
-    def compute_semantic_movement(xyz_euler):
-        """Per-step EE movements in semantic camera frame, zero-padded at the end.
-
-        For each t in [0, T-2]:
-          translation: P @ R_c2w[t]^T @ (pos[t+1] − pos[t])
-          rotation:    P @ R_c2w[t]^T @ (R[t+1] @ R[t]^T) @ R_c2w[t] @ P^T  → euler
-
-        Args:
-            xyz_euler: [T, 6] world-frame EE poses [x, y, z, roll, pitch, yaw]
-        Returns:
-            [T, 6] movements in semantic camera frame (last row is zeros)
-        """
-        R_cam_t = R_c2w[:-1]  # [T-1, 3, 3]  camera at t (not t+1)
-
-        # Translation delta in semantic cam frame
-        delta_pos_w  = xyz_euler[1:, :3] - xyz_euler[:-1, :3]          # [T-1, 3]
-        delta_pos_c  = tf.einsum("tji,tj->ti", R_cam_t, delta_pos_w)   # R^T @ delta
-        delta_pos_s  = tf.einsum("ij,tj->ti",  P,       delta_pos_c)   # P @ delta_c
-
-        # Rotation delta in semantic cam frame:
-        #   R_diff_world  = R[t+1] @ R[t]^T
-        #   R_diff_cam    = R_cam^T @ R_diff_world @ R_cam
-        #   R_diff_semantic = P @ R_diff_cam @ P^T
-        R_w_t   = euler_to_rotation_matrix(xyz_euler[:-1, 3:6])  # [T-1,3,3]
-        R_w_tp1 = euler_to_rotation_matrix(xyz_euler[1:,  3:6])  # [T-1,3,3]
-        R_diff_w = tf.einsum("tij,tkj->tik", R_w_tp1, R_w_t)    # R_{t+1} @ R_t^T
-        R_diff_c = tf.einsum("tji,tjk,tkl->til", R_cam_t, R_diff_w, R_cam_t)
-        R_diff_s = tf.einsum("ij,tjk,kl->til", P, R_diff_c, PT)
-        euler_s  = rotation_matrix_to_euler(R_diff_s)             # [T-1, 3]
-
-        movements = tf.concat([delta_pos_s, euler_s], axis=-1)    # [T-1, 6]
-        return tf.concat(
-            [movements, tf.zeros([1, 6], dtype=movements.dtype)], axis=0
-        )  # [T, 6]
-
-    left_movement  = compute_semantic_movement(left_pose)   # [T, 6]
-    right_movement = compute_semantic_movement(right_pose)  # [T, 6]
+    # Language action: world-frame per-step EE deltas.
+    # Translation dims are in the world frame here; group_language_actions will
+    # sum them (giving total world-frame displacement) and rotate the sum to the
+    # semantic camera frame at t using the lang_R field stored by chunk_actions.
+    # Rotation dims use body-frame euler_diff, composed by sum_actions.
+    left_movement  = compute_padded_movement_actions(left_pose)   # [T, 6]
+    right_movement = compute_padded_movement_actions(right_pose)  # [T, 6]
     trajectory["language_action"] = tf.concat(
         [left_movement, left_gripper, right_movement, right_gripper], axis=-1
     )  # [T, 14]

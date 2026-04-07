@@ -198,6 +198,13 @@ class AriaDataset(SingleOXEDataset):
             axis=-1,
         )
 
+        # Store per-timestep "world → semantic cam" rotation for group_language_actions.
+        # lang_R[t] = P @ R_c2w[t]^T  maps a world-frame vector to semantic cam frame at t.
+        # Stored as [T, 9] (flattened [T, 3, 3]) so it passes through the pipeline unchanged.
+        # Consumed and removed by group_language_actions / add_prediction_pairs.
+        R_world_to_sem = tf.einsum("ij,tkj->tik", P, R_c2w)  # [T, 3, 3]
+        traj["lang_R"] = tf.reshape(R_world_to_sem, [-1, 9])  # [T, 9]
+
         traj.pop("head_pose", None)
         return traj
 
@@ -318,7 +325,21 @@ class AriaDataset(SingleOXEDataset):
                 per_timestep_windows=chosen_steps,
             )
 
-            traj["language_actions"] = sum_actions(actions_window, valid_lengths)
+            # Sum world-frame per-step deltas over the chosen horizon
+            language_actions = sum_actions(actions_window, valid_lengths)
+
+            # Rotate the summed world-frame translations to semantic cam frame at t.
+            # Correct formula: P @ R_c2w[t]^T @ Σᵢ Δpos_world[t+i]
+            #                = lang_R[t] @ total_world_displacement
+            lang_r = tf.reshape(traj["lang_R"], [-1, 3, 3])  # [T, 3, 3]
+            left_trans  = tf.einsum("tij,tj->ti", lang_r, language_actions[:, :3])
+            right_trans = tf.einsum("tij,tj->ti", lang_r, language_actions[:, 7:10])
+            language_actions = tf.concat(
+                [left_trans, language_actions[:, 3:7], right_trans, language_actions[:, 10:]],
+                axis=-1,
+            )
+
+            traj["language_actions"] = language_actions
             traj["language_actions"].set_shape(
                 [None, traj["language_action"].shape[-1]]
             )
@@ -378,16 +399,29 @@ class AriaDataset(SingleOXEDataset):
                 per_timestep_windows=deltas,
             )
 
-            prediction_lang_actions = sum_actions(actions_window, deltas)
-            prediction_lang_actions.set_shape(
-                [None, traj["language_action"].shape[-1]]
+            pred_lang = sum_actions(actions_window, deltas)
+
+            # Same world-frame → semantic cam rotation as in group_language_actions
+            lang_r = tf.reshape(traj["lang_R"], [-1, 3, 3])  # [T, 3, 3]
+            left_trans  = tf.einsum("tij,tj->ti", lang_r, pred_lang[:, :3])
+            right_trans = tf.einsum("tij,tj->ti", lang_r, pred_lang[:, 7:10])
+            pred_lang = tf.concat(
+                [left_trans, pred_lang[:, 3:7], right_trans, pred_lang[:, 10:]],
+                axis=-1,
             )
 
-            traj["prediction_language_actions"] = prediction_lang_actions
+            pred_lang.set_shape([None, traj["language_action"].shape[-1]])
+            traj["prediction_language_actions"] = pred_lang
             traj["prediction_delta"] = deltas
 
             return traj
 
         self.dataset = self.dataset.traj_map(
             add_prediction_pairs, self.num_parallel_calls
+        )
+
+        # Cleanup: lang_R has been consumed; remove it from the trajectory.
+        self.dataset = self.dataset.traj_map(
+            lambda traj: {k: v for k, v in traj.items() if k != "lang_R"},
+            self.num_parallel_calls,
         )
