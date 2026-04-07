@@ -260,7 +260,7 @@ def _ensure_color(img: np.ndarray | None) -> np.ndarray | None:
     return img
 
 
-def _wrap_text_to_lines(text: str, max_chars_per_line: int) -> list[str]:
+def _wrap_text_to_lines(text: str, max_chars_per_line: int, max_lines: int = 12) -> list[str]:
     words = text.split()
     lines: list[str] = []
     cur: list[str] = []
@@ -277,7 +277,7 @@ def _wrap_text_to_lines(text: str, max_chars_per_line: int) -> list[str]:
             cur_len += add
     if cur:
         lines.append(" ".join(cur))
-    return lines[:4]  # cap lines to avoid huge overlays
+    return lines[:max_lines]
 
 
 def _draw_text_block(img: np.ndarray, text: str, area: tuple[int, int, int, int]) -> np.ndarray:
@@ -346,6 +346,49 @@ def _draw_text_block(img: np.ndarray, text: str, area: tuple[int, int, int, int]
     return np.array(pil_img)
 
 
+def _make_text_panel(text: str, width: int, height: int = 180) -> np.ndarray:
+    """Create a dark panel of given size with wrapped text rendered into it.
+
+    Returns an RGB uint8 array of shape [height, width, 3].
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception:
+        panel = np.zeros((height, width, 3), dtype=np.uint8)
+        panel[:] = 20
+        return panel
+
+    panel = Image.new("RGB", (width, height), color=(20, 20, 20))
+    draw = ImageDraw.Draw(panel)
+
+    font_size = 14
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
+    except Exception:
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+        except Exception:
+            font = ImageFont.load_default()
+
+    padding = 10
+    available_width = width - 2 * padding
+    avg_char_width = font_size * 0.6
+    max_chars = max(20, int(available_width / avg_char_width))
+    line_h = font_size + 4
+    max_lines = max(1, (height - 2 * padding) // line_h)
+
+    lines = _wrap_text_to_lines(text, max_chars, max_lines=max_lines)
+    y = padding
+    for line in lines:
+        # Thin black outline for legibility
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            draw.text((padding + dx, y + dy), line, font=font, fill=(0, 0, 0))
+        draw.text((padding, y), line, font=font, fill=(220, 220, 220))
+        y += line_h
+
+    return np.array(panel)
+
+
 def _make_legend_bar(width: int, height: int = 28) -> np.ndarray:
     try:
         from PIL import Image
@@ -385,21 +428,21 @@ def _make_legend_bar(width: int, height: int = 28) -> np.ndarray:
     return np.array(bar)
 
 
-def _compose_pages(rows: list[np.ndarray], target_max_height: int = 1600) -> list[np.ndarray]:
+def _compose_pages(rows: list[np.ndarray], target_max_height: int = 1600, max_per_page: int = 3) -> list[np.ndarray]:
     pages: list[np.ndarray] = []
     if not rows:
         return pages
     row_h = rows[0].shape[0]
     legend_height = 40
-    bottom_padding = 20  # Add padding at bottom so last text bar is visible
-    per_page = max(1, (target_max_height - legend_height - bottom_padding) // row_h)
+    bottom_padding = 20
+    per_page_by_height = max(1, (target_max_height - legend_height - bottom_padding) // row_h)
+    per_page = min(max_per_page, per_page_by_height)
     for i in range(0, len(rows), per_page):
         chunk = rows[i : i + per_page]
         grid = np.concatenate(chunk, axis=0)
         legend = _make_legend_bar(grid.shape[1], height=legend_height)
-        # Add bottom padding bar to prevent text cutoff
         padding_bar = np.zeros((bottom_padding, grid.shape[1], 3), dtype=np.uint8)
-        padding_bar[:] = 32  # dark gray matching legend
+        padding_bar[:] = 32
         page = np.concatenate([legend, grid, padding_bar], axis=0)
         pages.append(page)
     return pages
@@ -552,12 +595,10 @@ def main(config: _config.TrainConfig):
             panels = [p for p in panels if p is not None]
             if not panels:
                 continue
-            row = np.concatenate(panels, axis=1)
-            # Larger bottom overlay to fit action comparisons
-            band_h_row = max(90, row.shape[0] // 5)
-            row = _draw_text_block(
-                row, combined_text, (4, row.shape[0] - band_h_row - 2, row.shape[1] - 4, row.shape[0] - 2)
-            )
+            img_row = np.concatenate(panels, axis=1)
+            # Place text in a dedicated dark panel below the images
+            text_panel = _make_text_panel(combined_text, width=img_row.shape[1], height=180)
+            row = np.concatenate([img_row, text_panel], axis=0)
             vis_rows.append(row)
         if vis_rows:
             pages = _compose_pages(vis_rows, target_max_height=1600)
