@@ -292,6 +292,30 @@ class AriaDataset(SingleOXEDataset):
 
         self.dataset = self.dataset.traj_map(pad_action_state, self.num_parallel_calls)
 
+        # Shared helper: rotate summed world-frame translation dims to semantic cam frame.
+        # layout: [l_xyz(3), l_euler(3), l_grip(1), r_xyz(3), r_euler(3), r_grip(1)]
+        # Only the two xyz blocks (0:3, 7:10) are rotated; euler/gripper are left as-is.
+        def _rotate_lang_trans(actions_14d, rot_3x3):
+            """Apply per-timestep world→semantic-cam rotation to both hands' xyz dims.
+
+            Args:
+                actions_14d: [T, 14] language actions with world-frame translations.
+                rot_3x3: [T, 3, 3] per-timestep rotation (= lang_R from chunk_actions).
+            Returns:
+                [T, 14] with left (0:3) and right (7:10) xyz rotated to semantic cam frame.
+            """
+            left_xyz  = tf.einsum("tij,tj->ti", rot_3x3, actions_14d[:, :3])    # [T, 3]
+            right_xyz = tf.einsum("tij,tj->ti", rot_3x3, actions_14d[:, 7:10])  # [T, 3]
+            return tf.concat(
+                [
+                    left_xyz,               # 0:3   left xyz  (rotated)
+                    actions_14d[:, 3:7],    # 3:7   left euler(3) + left gripper(1)
+                    right_xyz,              # 7:10  right xyz (rotated)
+                    actions_14d[:, 10:],    # 10:14 right euler(3) + right gripper(1)
+                ],
+                axis=-1,
+            )
+
         # Step 4: Group language actions over variable horizon windows
         def group_language_actions(traj):
             traj_len = tf.shape(traj[action_key])[0]
@@ -325,19 +349,12 @@ class AriaDataset(SingleOXEDataset):
                 per_timestep_windows=chosen_steps,
             )
 
-            # Sum world-frame per-step deltas over the chosen horizon
+            # Sum world-frame per-step deltas over the chosen horizon, then rotate.
+            # Σᵢ Δpos_world[t+i] = pos_world[t+H] − pos_world[t]  (world-frame total)
+            # lang_R[t] @ total = P @ R_c2w[t]^T @ total  (semantic cam frame at t)
             language_actions = sum_actions(actions_window, valid_lengths)
-
-            # Rotate the summed world-frame translations to semantic cam frame at t.
-            # Correct formula: P @ R_c2w[t]^T @ Σᵢ Δpos_world[t+i]
-            #                = lang_R[t] @ total_world_displacement
-            lang_r = tf.reshape(traj["lang_R"], [-1, 3, 3])  # [T, 3, 3]
-            left_trans  = tf.einsum("tij,tj->ti", lang_r, language_actions[:, :3])
-            right_trans = tf.einsum("tij,tj->ti", lang_r, language_actions[:, 7:10])
-            language_actions = tf.concat(
-                [left_trans, language_actions[:, 3:7], right_trans, language_actions[:, 10:]],
-                axis=-1,
-            )
+            lang_r = tf.reshape(traj["lang_R"], [-1, 3, 3])          # [T, 3, 3]
+            language_actions = _rotate_lang_trans(language_actions, lang_r)
 
             traj["language_actions"] = language_actions
             traj["language_actions"].set_shape(
@@ -400,15 +417,8 @@ class AriaDataset(SingleOXEDataset):
             )
 
             pred_lang = sum_actions(actions_window, deltas)
-
-            # Same world-frame → semantic cam rotation as in group_language_actions
             lang_r = tf.reshape(traj["lang_R"], [-1, 3, 3])  # [T, 3, 3]
-            left_trans  = tf.einsum("tij,tj->ti", lang_r, pred_lang[:, :3])
-            right_trans = tf.einsum("tij,tj->ti", lang_r, pred_lang[:, 7:10])
-            pred_lang = tf.concat(
-                [left_trans, pred_lang[:, 3:7], right_trans, pred_lang[:, 10:]],
-                axis=-1,
-            )
+            pred_lang = _rotate_lang_trans(pred_lang, lang_r)
 
             pred_lang.set_shape([None, traj["language_action"].shape[-1]])
             traj["prediction_language_actions"] = pred_lang

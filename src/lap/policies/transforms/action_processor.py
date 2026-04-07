@@ -25,7 +25,7 @@ class ActionProcessor:
         random_frame_prob: Probability of using base frame instead of EEF frame.
     """
 
-    language_action_format: "LanguageActionFormat"
+    language_action_format: LanguageActionFormat
     random_frame_prob: float = 0.0
 
     def summarize_language_actions(
@@ -111,6 +111,7 @@ class ActionProcessor:
         Returns:
             Summarized action text.
         """
+        breakpoint()
         if is_bimanual:
             return summarize_bimanual_numeric_actions(
                 language_actions,

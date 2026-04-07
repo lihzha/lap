@@ -169,6 +169,8 @@ class CoTInputs(upstream_transforms.DataTransformFn):
         if self.model_type == ExtendedModelType.LAP_FAST:
             image_masks = [np.True_ for _ in image_masks]
 
+        breakpoint()
+
         # Build inputs dictionary
         inputs = {
             "state": data["observation"]["state"],
