@@ -188,6 +188,21 @@ class AriaDataset(SingleOXEDataset):
         left_grip_chunk  = left_grip[:, :-1, :]   # [T, H, 1]
         right_grip_chunk = right_grip[:, :-1, :]  # [T, H, 1]
 
+        # Store per-timestep "world → semantic cam" rotation for group_language_actions.
+        # lang_R[t] = P @ R_c2w[t]^T  maps a world-frame vector to semantic cam frame at t.
+        R_world_to_sem = tf.einsum("ij,tkj->tik", P, R_c2w)  # [T, 3, 3]
+        traj["lang_R"] = tf.reshape(R_world_to_sem, [-1, 9])  # [T, 9]
+
+        # Store world-frame EE orientations for the rotation-frame transform.
+        # Use windowed_actions[:, 0, :] — window index 0 is the current timestep t
+        # in world-frame coordinates, identical to traj[action_key][t] before it is
+        # overwritten below.  Extracting here avoids reading the wrong tensor.
+        # action layout: [l_xyz(3), l_euler(3), l_grip(1), r_xyz(3), r_euler(3), r_grip(1)]
+        R_ee_left_w  = euler_to_rotation_matrix(windowed_actions[:, 0, 3:6])    # [T, 3, 3]
+        R_ee_right_w = euler_to_rotation_matrix(windowed_actions[:, 0, 10:13])  # [T, 3, 3]
+        traj["lang_ee_R_left"]  = tf.reshape(R_ee_left_w,  [-1, 9])  # [T, 9]
+        traj["lang_ee_R_right"] = tf.reshape(R_ee_right_w, [-1, 9])  # [T, 9]
+
         # Final action chunks: [T, action_horizon, 14]
         # Format: [l_dxyz(3), l_deuler(3), l_grip(1), r_dxyz(3), r_deuler(3), r_grip(1)]
         traj[action_key] = tf.concat(
@@ -197,13 +212,6 @@ class AriaDataset(SingleOXEDataset):
             ],
             axis=-1,
         )
-
-        # Store per-timestep "world → semantic cam" rotation for group_language_actions.
-        # lang_R[t] = P @ R_c2w[t]^T  maps a world-frame vector to semantic cam frame at t.
-        # Stored as [T, 9] (flattened [T, 3, 3]) so it passes through the pipeline unchanged.
-        # Consumed and removed by group_language_actions / add_prediction_pairs.
-        R_world_to_sem = tf.einsum("ij,tkj->tik", P, R_c2w)  # [T, 3, 3]
-        traj["lang_R"] = tf.reshape(R_world_to_sem, [-1, 9])  # [T, 9]
 
         traj.pop("head_pose", None)
         return traj
@@ -292,26 +300,58 @@ class AriaDataset(SingleOXEDataset):
 
         self.dataset = self.dataset.traj_map(pad_action_state, self.num_parallel_calls)
 
-        # Shared helper: rotate summed world-frame translation dims to semantic cam frame.
+        # Shared helper: rotate both translation and rotation dims to semantic cam frame.
         # layout: [l_xyz(3), l_euler(3), l_grip(1), r_xyz(3), r_euler(3), r_grip(1)]
-        # Only the two xyz blocks (0:3, 7:10) are rotated; euler/gripper are left as-is.
-        def _rotate_lang_trans(actions_14d, rot_3x3):
-            """Apply per-timestep world→semantic-cam rotation to both hands' xyz dims.
+        #
+        # Translation (0:3, 7:10):
+        #   lang_R[t] @ Σ Δpos_world  →  semantic cam frame at t
+        #
+        # Rotation (3:6, 10:13):
+        #   sum_actions composes euler_diff steps, telescoping to:
+        #     R_total_body = R_world_ee[t]^T @ R_world_ee[t+H]  (EE body frame at t)
+        #   We want it in semantic cam frame at t:
+        #     Q = lang_R @ R_world_ee[t]   (EE body frame → semantic cam frame)
+        #     R_total_sem = Q @ R_total_body @ Q^T
+        #   This aligns axes: tilt fwd/bwd ≈ rot around X, left/right ≈ Y, CW/CCW ≈ Z.
+        def _rotate_lang_trans(actions_14d, rot_3x3, r_ee_left, r_ee_right):
+            """Rotate translation and rotation dims from world/body frame to semantic cam.
 
             Args:
-                actions_14d: [T, 14] language actions with world-frame translations.
-                rot_3x3: [T, 3, 3] per-timestep rotation (= lang_R from chunk_actions).
+                actions_14d: [T, 14] summed language actions (world-frame translations,
+                             body-frame rotations from sum_actions telescoping).
+                rot_3x3:    [T, 3, 3]  lang_R = P @ R_c2w^T
+                r_ee_left:  [T, 3, 3]  world-frame left-EE orientation at t
+                r_ee_right: [T, 3, 3]  world-frame right-EE orientation at t
             Returns:
-                [T, 14] with left (0:3) and right (7:10) xyz rotated to semantic cam frame.
+                [T, 14] with all translation and rotation dims in semantic cam frame.
             """
+            # ── Translation ───────────────────────────────────────────────────
             left_xyz  = tf.einsum("tij,tj->ti", rot_3x3, actions_14d[:, :3])    # [T, 3]
             right_xyz = tf.einsum("tij,tj->ti", rot_3x3, actions_14d[:, 7:10])  # [T, 3]
+
+            # ── Rotation ──────────────────────────────────────────────────────
+            # Q = lang_R @ R_world_ee[t]  transforms from EE body frame to semantic cam
+            q_left  = tf.einsum("tij,tjk->tik", rot_3x3, r_ee_left)   # [T, 3, 3]
+            q_right = tf.einsum("tij,tjk->tik", rot_3x3, r_ee_right)  # [T, 3, 3]
+
+            r_body_left  = euler_to_rotation_matrix(actions_14d[:, 3:6])    # [T, 3, 3]
+            r_body_right = euler_to_rotation_matrix(actions_14d[:, 10:13])  # [T, 3, 3]
+
+            # R_sem = Q @ R_body @ Q^T  (similarity transform)
+            r_sem_left  = tf.einsum("tij,tjk,tlk->til", q_left,  r_body_left,  q_left)
+            r_sem_right = tf.einsum("tij,tjk,tlk->til", q_right, r_body_right, q_right)
+
+            euler_sem_left  = rotation_matrix_to_euler(r_sem_left)   # [T, 3]
+            euler_sem_right = rotation_matrix_to_euler(r_sem_right)  # [T, 3]
+
             return tf.concat(
                 [
-                    left_xyz,               # 0:3   left xyz  (rotated)
-                    actions_14d[:, 3:7],    # 3:7   left euler(3) + left gripper(1)
-                    right_xyz,              # 7:10  right xyz (rotated)
-                    actions_14d[:, 10:],    # 10:14 right euler(3) + right gripper(1)
+                    left_xyz,                # 0:3   left xyz   (semantic cam)
+                    euler_sem_left,          # 3:6   left euler (semantic cam)
+                    actions_14d[:, 6:7],     # 6:7   left gripper
+                    right_xyz,               # 7:10  right xyz  (semantic cam)
+                    euler_sem_right,         # 10:13 right euler (semantic cam)
+                    actions_14d[:, 13:],     # 13:14 right gripper
                 ],
                 axis=-1,
             )
@@ -353,8 +393,12 @@ class AriaDataset(SingleOXEDataset):
             # Σᵢ Δpos_world[t+i] = pos_world[t+H] − pos_world[t]  (world-frame total)
             # lang_R[t] @ total = P @ R_c2w[t]^T @ total  (semantic cam frame at t)
             language_actions = sum_actions(actions_window, valid_lengths)
-            lang_r = tf.reshape(traj["lang_R"], [-1, 3, 3])          # [T, 3, 3]
-            language_actions = _rotate_lang_trans(language_actions, lang_r)
+            lang_r     = tf.reshape(traj["lang_R"],         [-1, 3, 3])
+            r_ee_left  = tf.reshape(traj["lang_ee_R_left"], [-1, 3, 3])
+            r_ee_right = tf.reshape(traj["lang_ee_R_right"],[-1, 3, 3])
+            language_actions = _rotate_lang_trans(
+                language_actions, lang_r, r_ee_left, r_ee_right
+            )
 
             traj["language_actions"] = language_actions
             traj["language_actions"].set_shape(
@@ -416,9 +460,13 @@ class AriaDataset(SingleOXEDataset):
                 per_timestep_windows=deltas,
             )
 
-            pred_lang = sum_actions(actions_window, deltas)
-            lang_r = tf.reshape(traj["lang_R"], [-1, 3, 3])  # [T, 3, 3]
-            pred_lang = _rotate_lang_trans(pred_lang, lang_r)
+            pred_lang  = sum_actions(actions_window, deltas)
+            lang_r     = tf.reshape(traj["lang_R"],         [-1, 3, 3])
+            r_ee_left  = tf.reshape(traj["lang_ee_R_left"], [-1, 3, 3])
+            r_ee_right = tf.reshape(traj["lang_ee_R_right"],[-1, 3, 3])
+            pred_lang  = _rotate_lang_trans(
+                pred_lang, lang_r, r_ee_left, r_ee_right
+            )
 
             pred_lang.set_shape([None, traj["language_action"].shape[-1]])
             traj["prediction_language_actions"] = pred_lang
@@ -430,8 +478,9 @@ class AriaDataset(SingleOXEDataset):
             add_prediction_pairs, self.num_parallel_calls
         )
 
-        # Cleanup: lang_R has been consumed; remove it from the trajectory.
+        # Cleanup: remove pipeline-internal fields consumed above.
+        _aux_keys = {"lang_R", "lang_ee_R_left", "lang_ee_R_right"}
         self.dataset = self.dataset.traj_map(
-            lambda traj: {k: v for k, v in traj.items() if k != "lang_R"},
+            lambda traj: {k: v for k, v in traj.items() if k not in _aux_keys},
             self.num_parallel_calls,
         )
