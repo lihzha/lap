@@ -111,7 +111,6 @@ class ActionProcessor:
         Returns:
             Summarized action text.
         """
-        breakpoint()
         if is_bimanual:
             return summarize_bimanual_numeric_actions(
                 language_actions,

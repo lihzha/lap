@@ -352,7 +352,9 @@ def _make_text_panel(text: str, width: int, height: int = 180) -> np.ndarray:
     Returns an RGB uint8 array of shape [height, width, 3].
     """
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image
+        from PIL import ImageDraw
+        from PIL import ImageFont
     except Exception:
         panel = np.zeros((height, width, 3), dtype=np.uint8)
         panel[:] = 20
