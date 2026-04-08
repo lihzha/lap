@@ -36,7 +36,7 @@ class Args:
     host: str = "0.0.0.0"
     port: int = 8000
     resize_size: int = 224
-    replan_steps: int = 2
+    replan_steps: int = 5
     policy_type: PolicyType = PolicyType.LAP
 
     #################################################################################################################
@@ -151,7 +151,6 @@ def eval_libero(args: Args) -> None:
                         single_action_or_chunk = np.asarray(response["actions"], dtype=np.float32)
                         if single_action_or_chunk.ndim == 1:
                             assert args.policy_type == PolicyType.LAP_AR
-                            print(response)
                             action_chunk = get_action_from_response(
                                 args.replan_steps, response, request["observation"]["state"]
                             )
@@ -170,7 +169,6 @@ def eval_libero(args: Args) -> None:
                     action = action_plan.popleft()
 
                     # Execute action in environment
-                    print(action[-1])
                     obs, _, done, _ = env.step(action.tolist())
                     if done:
                         task_successes += 1
@@ -316,8 +314,8 @@ def _quat2rot6d(quat):
     return rot6d
 
 
-_OSC_POS_OUTPUT_MAX = 0.05   # meters: OSC_POSE scales [-1, 1] input → [-0.05, 0.05] m
-_OSC_ROT_OUTPUT_MAX = 0.5    # radians: OSC_POSE scales [-1, 1] input → [-0.5, 0.5] rad
+_OSC_POS_OUTPUT_MAX = 0.05  # meters: OSC_POSE scales [-1, 1] input → [-0.05, 0.05] m
+_OSC_ROT_OUTPUT_MAX = 0.5  # radians: OSC_POSE scales [-1, 1] input → [-0.5, 0.5] rad
 
 
 def get_action_from_response(replan_steps, response, state):

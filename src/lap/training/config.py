@@ -107,7 +107,7 @@ class DataConfig(upstream_config.DataConfig):
     # Augmentation parameters
     aggressive_aug: bool = False
     aug_wrist_image: bool = True
-    random_base_prob: float = 0.5
+    random_base_prob: float = 0.0
     random_mask_prob: float = 0.2
     not_rotate_wrist_prob: float = 0.0
     use_rough_scale: bool = False
@@ -467,7 +467,7 @@ class EmaScheduleChoice:
 
     Example:
         # From command line:
-        python -m lap.training.train --config lap_droid_lap_v4 \\
+        python scripts/train.py --config lap \\
             --ema_schedule_choice.kind delayed \\
             --ema_schedule_choice.start_step 10000 \\
             --ema_schedule_choice.decay 0.999
@@ -607,6 +607,7 @@ class TrainConfig(upstream_config.TrainConfig):
 _CONFIGS = [
     TrainConfig(
         name="lap",
+        data=RLDSDataConfig(random_base_prob=0.5),
         model=lap_config.LAPConfig(
             action_dim=7,
             action_horizon=16,
