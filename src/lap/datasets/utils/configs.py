@@ -346,6 +346,42 @@ OXE_DATASET_CONFIGS = {
         "robot_morphology": "Bi-Manual",
         "has_suboptimal": "No",
     },
+    **{
+        f"mecka_dataset_part{i}": {
+            "image_obs_keys": {
+                "primary": "image",  # egocentric head camera
+                "secondary": None,
+                "wrist": None,
+            },
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_EULER,
+            "action_encoding": ActionEncoding.EEF_POS,
+            "control_frequency": 30,
+            "language_annotations": "Natural",
+            "robot_morphology": "Bi-Manual",
+            "has_suboptimal": "No",
+        }
+        for i in range(1, 8)
+    },
+    **{
+        f"scale_dataset_part{i}": {
+            "image_obs_keys": {
+                "primary": "image",  # egocentric head camera
+                "secondary": None,
+                "wrist": None,
+            },
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_EULER,
+            "action_encoding": ActionEncoding.EEF_POS,
+            "control_frequency": 30,
+            "language_annotations": "Natural",
+            "robot_morphology": "Bi-Manual",
+            "has_suboptimal": "No",
+        }
+        for i in range(1, 3)
+    },
     "molmoact_dataset": {
         "image_obs_keys": {
             "primary": "first_view_image",
@@ -560,6 +596,24 @@ OXE_DATASET_METADATA = {
         "language_annotations": "Natural",
         "robot_morphology": "Bi-Manual",
         "has_suboptimal": "No",
+    },
+    **{
+        f"mecka_dataset_part{i}": {
+            "control_frequency": 30,
+            "language_annotations": "Natural",
+            "robot_morphology": "Bi-Manual",
+            "has_suboptimal": "No",
+        }
+        for i in range(1, 8)
+    },
+    **{
+        f"scale_dataset_part{i}": {
+            "control_frequency": 30,
+            "language_annotations": "Natural",
+            "robot_morphology": "Bi-Manual",
+            "has_suboptimal": "No",
+        }
+        for i in range(1, 3)
     },
 }
 

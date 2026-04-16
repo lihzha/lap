@@ -1554,6 +1554,35 @@ def aria_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
     return trajectory
 
 
+def _mecka_scale_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
+    """Shared transform for Mecka and Scale datasets.
+
+    Identical to aria_dataset_transform but also handles the per-step
+    ``subtask`` field.  When ``subtask`` is non-empty it overrides
+    ``language_instruction`` so downstream modules receive the finest-grained
+    annotation available.
+    """
+    # Replace language_instruction with subtask when the subtask is non-empty.
+    subtask = trajectory.get("subtask", None)
+    if subtask is not None:
+        lang_instr = trajectory["language_instruction"]
+        is_non_empty = tf.strings.length(tf.strings.strip(subtask)) > 0
+        trajectory["language_instruction"] = tf.where(is_non_empty, subtask, lang_instr)
+
+    # Delegate the rest of the processing to the aria transform.
+    return aria_dataset_transform(trajectory)
+
+
+def mecka_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
+    """Standardization transform for the Mecka bimanual human hand dataset."""
+    return _mecka_scale_dataset_transform(trajectory)
+
+
+def scale_dataset_transform(trajectory: dict[str, Any]) -> dict[str, Any]:
+    """Standardization transform for the Scale bimanual human hand dataset."""
+    return _mecka_scale_dataset_transform(trajectory)
+
+
 def human_dataset_transform(sample: dict[str, Any]) -> dict[str, Any]:
     """
     Transforms human data into the expected format by adding dummy actions.
@@ -1838,4 +1867,15 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "maniskill_dataset": maniskill_dataset_transform,
     ### Aria human dataset
     "aria_dataset": aria_dataset_transform,
+    ### Mecka human dataset (7 parts)
+    "mecka_dataset_part1": mecka_dataset_transform,
+    "mecka_dataset_part2": mecka_dataset_transform,
+    "mecka_dataset_part3": mecka_dataset_transform,
+    "mecka_dataset_part4": mecka_dataset_transform,
+    "mecka_dataset_part5": mecka_dataset_transform,
+    "mecka_dataset_part6": mecka_dataset_transform,
+    "mecka_dataset_part7": mecka_dataset_transform,
+    ### Scale human dataset (2 parts)
+    "scale_dataset_part1": scale_dataset_transform,
+    "scale_dataset_part2": scale_dataset_transform,
 }

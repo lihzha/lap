@@ -50,4 +50,8 @@ OXE_NAMED_MIXTURES: dict[str, list[tuple[str, float]]] = {
     ],
     "maniskill_dataset": [("maniskill_dataset", 1.0)],
     "aria_dataset": [("aria_dataset", 1.0)],
+    "mecka_dataset": [(f"mecka_dataset_part{i}", 1.0) for i in range(1, 8)],
+    **{f"mecka_dataset_part{i}": [(f"mecka_dataset_part{i}", 1.0)] for i in range(1, 8)},
+    "scale_dataset": [(f"scale_dataset_part{i}", 1.0) for i in range(1, 3)],
+    **{f"scale_dataset_part{i}": [(f"scale_dataset_part{i}", 1.0)] for i in range(1, 3)},
 }
