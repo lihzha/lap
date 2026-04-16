@@ -275,8 +275,11 @@ def is_idle_language_action(
         return True
 
     if sum_decimal == "raw_numeric":
+        raw = language_action
+        if raw.startswith("Left arm: "):
+            raw = raw[len("Left arm: "):]
         try:
-            vals = [int(v) for v in language_action.split()]
+            vals = [int(v) for v in raw.split()]
         except ValueError:
             return True
         if len(vals) < 3:

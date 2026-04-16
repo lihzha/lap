@@ -126,11 +126,14 @@ class ActionProcessor:
                 rotation_precision=10,
             )
 
-        return summarize_numeric_actions(
+        result = summarize_numeric_actions(
             language_actions,
             sum_decimal=self.language_action_format.get_sum_decimal(),
             include_rotation=self.language_action_format.include_rotation,
         )
+        if result is None:
+            return result
+        return f"Left arm: {result}"
 
     @staticmethod
     def extract_motion_components(language_actions: np.ndarray) -> dict:
