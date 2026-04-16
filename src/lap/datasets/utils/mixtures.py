@@ -50,6 +50,28 @@ OXE_NAMED_MIXTURES: dict[str, list[tuple[str, float]]] = {
     ],
     "maniskill_dataset": [("maniskill_dataset", 1.0)],
     "aria_dataset": [("aria_dataset", 1.0)],
+    # === Robot + Human mixture ===
+    "robot_and_human": [
+        # --- Robot datasets ---
+        ("bc_z", 1.0),
+        ("fractal20220817_data", 1.0),
+        ("bridge_v2_oxe", 1.0),
+        ("taco_play", 1.0),
+        ("jaco_play", 1.0),
+        ("furniture_bench_dataset_converted_externally_to_rlds", 1.0),
+        ("utaustin_mutex", 1.0),
+        ("berkeley_fanuc_manipulation", 1.0),
+        ("cmu_stretch", 1.0),
+        ("fmb", 1.0),
+        ("dobbe", 1.0),
+        ("berkeley_autolab_ur5", 1.0),
+        ("droid", 1.0),
+        ("maniskill_dataset", 1.0),
+        # --- Human datasets ---
+        ("aria_dataset", 1.0),
+        *[(f"mecka_dataset_part{i}", 1.0) for i in range(1, 8)],
+        *[(f"scale_dataset_part{i}", 1.0) for i in range(1, 3)],
+    ],
     "mecka_dataset": [(f"mecka_dataset_part{i}", 1.0) for i in range(1, 8)],
     **{f"mecka_dataset_part{i}": [(f"mecka_dataset_part{i}", 1.0)] for i in range(1, 8)},
     "scale_dataset": [(f"scale_dataset_part{i}", 1.0) for i in range(1, 3)],
