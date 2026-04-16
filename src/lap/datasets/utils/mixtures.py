@@ -52,21 +52,25 @@ OXE_NAMED_MIXTURES: dict[str, list[tuple[str, float]]] = {
     "aria_dataset": [("aria_dataset", 1.0)],
     # === Robot + Human mixture ===
     "robot_and_human": [
-        # --- Robot datasets ---
-        ("bc_z", 1.0),
+        ("bc_z", 0.05),
+        ("droid", 2.0),
         ("fractal20220817_data", 1.0),
         ("bridge_v2_oxe", 1.0),
-        ("taco_play", 1.0),
-        ("jaco_play", 1.0),
-        ("furniture_bench_dataset_converted_externally_to_rlds", 1.0),
+        ("taco_play", 2.0),
+        (
+            "jaco_play",
+            1.0,
+        ),  # gripper state and action still seems incorrect. Action sometimes should be 1 but is 0. State seems random. Ignore for now.
+        ("furniture_bench_dataset_converted_externally_to_rlds", 0.05),
         ("utaustin_mutex", 1.0),
-        ("berkeley_fanuc_manipulation", 1.0),
-        ("cmu_stretch", 1.0),
-        ("fmb", 1.0),
-        ("dobbe", 1.0),
+        ("berkeley_fanuc_manipulation", 2.0),  # not sure quaternion is xyzw or wxyz
+        ("fmb", 0.05),
         ("berkeley_autolab_ur5", 1.0),
-        ("droid", 1.0),
-        ("maniskill_dataset", 1.0),
+        ("austin_buds_dataset_converted_externally_to_rlds", 1.0),  # no language instructions, 50 trajs
+        ("austin_sailor_dataset_converted_externally_to_rlds", 1.0),  # no language instructions, 250 trajs
+        ("austin_sirius_dataset_converted_externally_to_rlds", 1.0),  # no language instructions, 600 trajs
+        ("viola", 1.0),  # gripper mostly out of view, 135 trajs
+        ("molmoact_dataset", 1.0),
         # --- Human datasets ---
         ("aria_dataset", 1.0),
         *[(f"mecka_dataset_part{i}", 1.0) for i in range(1, 8)],
