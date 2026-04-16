@@ -270,7 +270,7 @@ class AriaDataset(SingleOXEDataset):
             bimanual_state_euler_to_rot6d, self.num_parallel_calls
         )
 
-        # Step 3: Pad actions and state to fixed global dimensions
+        # Step 3: Pad actions, language_action, and state to fixed global dimensions
         def pad_action_state(traj):
             action_last_dim = tf.shape(traj[action_key])[-1]
             pad_amount_action = tf.maximum(0, self.action_dim - action_last_dim)
@@ -279,6 +279,16 @@ class AriaDataset(SingleOXEDataset):
                 [[0, 0], [0, 0], [0, pad_amount_action]],
             )
             traj[action_key].set_shape([None, action_horizon, self.action_dim])
+
+            # Pad language_action to action_dim so all datasets have the same
+            # last dimension when mixed in a batch (single-arm 7D, bimanual 14D).
+            lang_action_last_dim = tf.shape(traj["language_action"])[-1]
+            pad_amount_lang = tf.maximum(0, self.action_dim - lang_action_last_dim)
+            traj["language_action"] = tf.pad(
+                traj["language_action"],
+                [[0, 0], [0, pad_amount_lang]],
+            )
+            traj["language_action"].set_shape([None, self.action_dim])
 
             state_last_dim = tf.shape(traj["observation"][state_key])[-1]
             pad_amount_state = tf.maximum(0, self.state_dim - state_last_dim)
