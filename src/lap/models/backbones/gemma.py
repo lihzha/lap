@@ -378,12 +378,6 @@ class Block(nn.Module):
         xs = [_gated_residual(x, y, gate) for x, y, gate in zip(xs, out, gates, strict=True)]
         xs = sharding.activation_sharding_constraint(xs)
 
-        # Sow first expert's (VLM) output for intermediate layer extraction
-        # When called with mutable=['intermediates'], these get stacked across layers
-        # Only sow the first expert to keep the structure simple (single array, not list)
-        if xs[0] is not None:
-            self.sow("intermediates", "layer_output", xs[0])
-
         return xs, kv_cache
 
 
@@ -423,7 +417,7 @@ class Module(nn.Module):
         )
         self.layers = nn.scan(
             block_cls,
-            variable_axes={"params": 0, "intermediates": 0},  # Stack intermediates across layers
+            variable_axes={"params": 0},
             split_rngs={"params": True, "dropout": True},
             in_axes=(
                 0,
@@ -462,63 +456,13 @@ class Module(nn.Module):
         *,
         kv_cache: KVCache | None = None,
         deterministic: bool = True,
-        return_layer_outputs: bool = False,
-        layer_indices: Sequence[int] | None = None,
-    ) -> (
-        tuple[Sequence[at.Float[at.Array, "b _t _d"] | None], KVCache]
-        | tuple[
-            Sequence[at.Float[at.Array, "b _t _d"] | None],
-            KVCache,
-            dict[int, Sequence[at.Float[at.Array, "b _t _d"] | None]],
-        ]
-    ):
-        """Forward pass through the transformer.
-
-        Args:
-            embedded: List of token embeddings, one per expert (or None).
-            positions: Position indices for each token.
-            mask: Attention mask.
-            adarms_cond: Adaptive RMS conditioning (optional).
-            kv_cache: KV cache for inference (optional).
-            deterministic: Whether to use deterministic dropout.
-            return_layer_outputs: If True, return intermediate layer outputs.
-            layer_indices: Which layer indices to return outputs for.
-                If None and return_layer_outputs=True, returns all layers.
-                Supports negative indexing (e.g., -1 for last layer before final norm).
-
-        Returns:
-            If return_layer_outputs=False: (outputs, kv_cache)
-            If return_layer_outputs=True: (outputs, kv_cache, layer_outputs_dict)
-                where layer_outputs_dict maps layer_index -> layer outputs
-        """
+    ) -> tuple[Sequence[at.Float[at.Array, "b _t _d"] | None], KVCache]:
         embedded = jax.tree.map(lambda e: e.astype(self.embed_dtype), embedded)
         mask = jnp.asarray(mask)[:, None, :, :]
         if adarms_cond is None:
             adarms_cond = [None] * len(self.configs)
 
-        # Always run through layers normally
         embedded, kv_cache = self.layers(embedded, kv_cache, positions, mask, adarms_cond, deterministic)
-
-        # Note: intermediate layer outputs are captured via sow and collected
-        # by the caller using mutable=['intermediates']. The layer_outputs dict
-        # is built from the intermediates collection outside this method.
-        # For now, return_layer_outputs flag just signals intent - actual
-        # intermediate collection happens at the apply() level.
-        layer_outputs = None
-        if return_layer_outputs:
-            # Intermediates are collected via sow during the forward pass above.
-            # The caller needs to use Module.apply() with mutable=['intermediates']
-            # to actually retrieve them. We return an empty dict as placeholder.
-            depth = self.configs[0].depth
-            if layer_indices is None:
-                target_layers = set(range(depth))
-            else:
-                target_layers = set()
-                for idx in layer_indices:
-                    normalized_idx = depth + idx if idx < 0 else idx
-                    if 0 <= normalized_idx < depth:
-                        target_layers.add(normalized_idx)
-            layer_outputs = dict.fromkeys(target_layers)
 
         assert all(e.dtype == jnp.dtype(self.embed_dtype) for e in embedded if e is not None)
 
@@ -526,13 +470,7 @@ class Module(nn.Module):
             f(e, a)[0] if e is not None else e for f, e, a in zip(self.final_norms, embedded, adarms_cond, strict=True)
         ]
 
-        if return_layer_outputs:
-            return out, kv_cache, layer_outputs
         return out, kv_cache
-
-    def get_num_layers(self) -> int:
-        """Return the number of transformer layers."""
-        return self.configs[0].depth
 
     def init(self, use_adarms: Sequence[bool]):
         """Convenience method for initializing all parameters, necessary due to the quirks of linen."""
