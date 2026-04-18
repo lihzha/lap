@@ -327,13 +327,14 @@ class AriaDataset(SingleOXEDataset):
             """Rotate translation and rotation dims from world/body frame to semantic cam.
 
             Args:
-                actions_14d: [T, 14] summed language actions (world-frame translations,
-                             body-frame rotations from sum_actions telescoping).
+                actions_14d: [T, D] summed language actions where D >= 14.
+                             Indices 0–13 hold the bimanual layout; indices 14+ are
+                             zero-padding carried through unchanged via [:, 13:].
                 rot_3x3:    [T, 3, 3]  lang_R = P @ R_c2w^T
                 r_ee_left:  [T, 3, 3]  world-frame left-EE orientation at t
                 r_ee_right: [T, 3, 3]  world-frame right-EE orientation at t
             Returns:
-                [T, 14] with all translation and rotation dims in semantic cam frame.
+                [T, D] with indices 0–13 rotated to semantic cam frame; 14+ unchanged.
             """
             # ── Translation ───────────────────────────────────────────────────
             left_xyz  = tf.einsum("tij,tj->ti", rot_3x3, actions_14d[:, :3])    # [T, 3]
