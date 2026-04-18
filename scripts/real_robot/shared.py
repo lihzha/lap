@@ -43,6 +43,8 @@ class Args:
     )
     use_wrist_camera: bool = True  # whether to use the wrist camera image as input to the policy
     run_upstream: bool = False  # whether to run the upstream policy from OpenPI
+    # Frame description for action prediction
+    frame_description: str = "end-effector frame"  # Coordinate frame for action prediction
     # Rollout saving parameters
     save_rollout: bool = False  # whether to save rollout data to h5 file
     rollout_save_dir: str = "./rollouts"  # directory to save rollout h5 files
@@ -175,6 +177,7 @@ class BaseEvalRunner:
                 "euler": curr_obs["euler"],
             },
             "prompt": instruction,
+            "frame_description": self.args.frame_description,
         }
         if self.args.use_wrist_camera and "wrist_image" in curr_obs:
             request["observation"]["left_wrist_0_rgb"] = curr_obs["wrist_image"]

@@ -169,18 +169,6 @@ class LAP(_pi0.Pi0):
 
         return tokens, input_mask, ar_mask
 
-    def _embed_prefix_for_loss(
-        self,
-        observation: CoTObservation | Observation,
-        suffix_inputs: dict[str, at.Array] | None,
-    ) -> tuple[
-        at.Float[at.Array, "b s emb"],
-        at.Bool[at.Array, "b s"],
-        at.Bool[at.Array, "b s"],
-        dict[str, at.Array],
-    ]:
-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
-        return prefix_tokens, prefix_mask, prefix_ar_mask, {}
 
     def prepare_suffix(
         self,
@@ -425,11 +413,8 @@ class LAP(_pi0.Pi0):
         suffix_inputs = (
             self.prepare_suffix(observation, actions, noise_rng, time_rng) if self.enable_action_training else None
         )
-        # Build prefix for langact/action losses (first frame + text by default).
-        # Subclasses can override to attach additional forward kwargs (e.g., image_mask).
-        prefix_tokens, prefix_mask, prefix_ar_mask, model_forward_kwargs = self._embed_prefix_for_loss(
-            observation, suffix_inputs
-        )
+        # Build prefix for langact/action losses (first frame + text)
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
 
         prefix_mask_action = (
             self._build_prefix_action_mask(prefix_mask, observation) if self.enable_action_training else prefix_mask
@@ -452,7 +437,6 @@ class LAP(_pi0.Pi0):
             positions=combined_positions,
             mask=combined_mask,
             adarms_cond=[None, suffix_inputs["adarms_cond"]] if self.enable_action_training else [None],
-            **model_forward_kwargs,
         )
 
         metrics = {}

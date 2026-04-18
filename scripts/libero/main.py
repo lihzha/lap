@@ -38,6 +38,7 @@ class Args:
     resize_size: int = 224
     replan_steps: int = 5
     policy_type: PolicyType = PolicyType.LAP
+    frame_description: str = "end-effector frame"  # Coordinate frame for action prediction
 
     #################################################################################################################
     # LIBERO environment-specific parameters
@@ -146,7 +147,7 @@ def eval_libero(args: Args) -> None:
 
                     if not action_plan:
                         # Query model to get action
-                        request = obs_to_request(obs, args.policy_type, img, wrist_img, task_description)
+                        request = obs_to_request(obs, args.policy_type, img, wrist_img, task_description, args.frame_description)
                         response = client.infer(request)
                         single_action_or_chunk = np.asarray(response["actions"], dtype=np.float32)
                         if single_action_or_chunk.ndim == 1:
@@ -270,16 +271,21 @@ def _get_libero_env(task, resolution, seed, controller="OSC_POSE"):
 
 
 def get_images_from_obs(obs, resize_size):
-    # IMPORTANT: rotate 180 degrees to match train preprocessing
-    img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
-    wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
+    # NOTE: Image orientation may vary across MuJoCo / LIBERO versions and camera setups.
+    # We apply a horizontal flip by default to match our expected convention.
+    # If your images look incorrect (e.g., mirrored or upside down), please adjust
+    # the flipping here (i.e., obs["agentview_image"][::-1, ::-1] and obs["robot0_eye_in_hand_image"][::-1, ::-1]).
+    img = np.ascontiguousarray(obs["agentview_image"][:, ::-1])
+
+    # Same note applies to the wrist (eye-in-hand) camera.
+    wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][:, ::-1])
     img = image_tools.convert_to_uint8(image_tools.resize_with_pad(img, resize_size, resize_size))
     wrist_img = image_tools.convert_to_uint8(image_tools.resize_with_pad(wrist_img, resize_size, resize_size))
 
     return img, wrist_img
 
 
-def obs_to_request(obs, policy_type: PolicyType, img, wrist_img, task_description: str):
+def obs_to_request(obs, policy_type: PolicyType, img, wrist_img, task_description: str, frame_description: str = "end-effector frame"):
     # Prepare observations dict
     assert policy_type in (PolicyType.LAP, PolicyType.LAP_AR), f"Unsupported policy type: {policy_type}"
     eef_pos = np.asarray(obs["robot0_eef_pos"], dtype=np.float32)
@@ -294,6 +300,7 @@ def obs_to_request(obs, policy_type: PolicyType, img, wrist_img, task_descriptio
             "state": state,
         },
         "prompt": str(task_description),
+        "frame_description": frame_description,
     }
 
 
