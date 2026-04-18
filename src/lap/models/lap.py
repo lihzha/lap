@@ -410,12 +410,12 @@ class LAP(_pi0.Pi0):
         # Store augmented images for later visualization (if requested)
         augmented_images = observation.images if return_augmented_images else None
 
-        suffix_inputs = (
-            self.prepare_suffix(observation, actions, noise_rng, time_rng) if self.enable_action_training else None
-        )
         # Build prefix for langact/action losses (first frame + text)
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
 
+        suffix_inputs = (
+            self.prepare_suffix(observation, actions, noise_rng, time_rng) if self.enable_action_training else None
+        )
         prefix_mask_action = (
             self._build_prefix_action_mask(prefix_mask, observation) if self.enable_action_training else prefix_mask
         )
