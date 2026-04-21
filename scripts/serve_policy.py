@@ -8,6 +8,10 @@ from openpi.policies import policy as _policy
 from openpi.serving import websocket_policy_server
 import tyro
 
+import tensorflow as tf
+# Configure Tensorflow with *no GPU devices* (to prevent clobber with PyTorch / JAX)
+tf.config.set_visible_devices([], 'GPU')
+
 import lap.policies.policy_config_adapter as _policy_config
 from lap.training import config as _config
 
