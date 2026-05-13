@@ -303,8 +303,8 @@ def rotation_matrix_to_quaternion(rot_matrix: tf.Tensor) -> tf.Tensor:
 def rotation_matrix_to_r6(rot_matrix: tf.Tensor) -> tf.Tensor:
     """Convert rotation matrix to 6D rotation representation.
 
-    The R6 representation contains the first two rows of the 3x3 rotation matrix:
-    [r11, r12, r13, r21, r22, r23]
+    The R6 representation contains the first two columns of the 3x3 rotation matrix:
+    [r11, r21, r31, r12, r22, r32]
 
     Args:
         rot_matrix: (..., 3, 3) rotation matrix
@@ -312,14 +312,14 @@ def rotation_matrix_to_r6(rot_matrix: tf.Tensor) -> tf.Tensor:
     Returns:
         (..., 6) R6 representation
     """
-    upper_two_rows = rot_matrix[..., :2, :]  # [..., 2, 3]
-    return tf.reshape(upper_two_rows, tf.concat([tf.shape(rot_matrix)[:-2], [6]], axis=0))
+    return tf.concat([rot_matrix[..., :, 0], rot_matrix[..., :, 1]], axis=-1)
 
 
 def r6_to_rotation_matrix(r6: tf.Tensor) -> tf.Tensor:
     """Convert 6D rotation representation to orthonormal rotation matrix.
 
     Uses Gram-Schmidt orthonormalization to reconstruct valid rotation matrix.
+    The two halves of r6 are interpreted as the first two columns of R.
 
     Args:
         r6: (..., 6) R6 representation
@@ -334,18 +334,18 @@ def r6_to_rotation_matrix(r6: tf.Tensor) -> tf.Tensor:
         norm = tf.maximum(tf.norm(vec, axis=-1, keepdims=True), eps)
         return vec / norm
 
-    r1 = r6[..., :3]
-    r2 = r6[..., 3:]
+    c1 = r6[..., :3]
+    c2 = r6[..., 3:]
 
-    r1 = _normalize(r1)
-    # Gram-Schmidt: remove component of r2 along r1 before normalizing
-    r2 = r2 - tf.reduce_sum(r2 * r1, axis=-1, keepdims=True) * r1
-    r2 = _normalize(r2)
+    c1 = _normalize(c1)
+    # Gram-Schmidt: remove component of c2 along c1 before normalizing
+    c2 = c2 - tf.reduce_sum(c2 * c1, axis=-1, keepdims=True) * c1
+    c2 = _normalize(c2)
 
-    r3 = tf.linalg.cross(r1, r2)
-    r3 = _normalize(r3)
+    c3 = tf.linalg.cross(c1, c2)
+    c3 = _normalize(c3)
 
-    return tf.stack([r1, r2, r3], axis=-2)
+    return tf.stack([c1, c2, c3], axis=-1)
 
 
 def euler_to_r6(euler: tf.Tensor) -> tf.Tensor:
@@ -556,7 +556,7 @@ def axis_angle_to_r6(axis_angle: tf.Tensor) -> tf.Tensor:
     axis = tf.where(angle < EPSILON, tf.constant([1.0, 0.0, 0.0], dtype=axis.dtype), axis)
 
     rotation_matrix = tft.rotation_matrix_3d.from_axis_angle(axis, angle)
-    return tf.concat([rotation_matrix[..., 0, :], rotation_matrix[..., 1, :]], axis=-1)
+    return tf.concat([rotation_matrix[..., :, 0], rotation_matrix[..., :, 1]], axis=-1)
 
 
 def axis_angle_to_euler(axis_angle: tf.Tensor) -> tf.Tensor:
@@ -604,4 +604,4 @@ def wxyz_to_r6(quaternion: tf.Tensor) -> tf.Tensor:
     # Convert from [w, x, y, z] to [x, y, z, w]
     quat_xyzw = tf.concat([quaternion[..., 1:4], quaternion[..., 0:1]], axis=-1)
     rotation_matrix = tft.rotation_matrix_3d.from_quaternion(quat_xyzw)
-    return tf.concat([rotation_matrix[..., 0, :], rotation_matrix[..., 1, :]], axis=-1)
+    return tf.concat([rotation_matrix[..., :, 0], rotation_matrix[..., :, 1]], axis=-1)

@@ -181,6 +181,13 @@ class CoTInputs(upstream_transforms.DataTransformFn):
         if dataset_name:
             inputs["dataset_name"] = dataset_name
 
+        # Forward frame_description from the raw request (used at inference).
+        # Training-time handlers may overwrite this when summarizing language actions.
+        if "frame_description" in data:
+            inputs["frame_description"] = TextParser.decode_text(
+                data["frame_description"], default="robot base frame"
+            )
+
         # Pad and store actions if present
         if "actions" in data:
             actions = upstream_transforms.pad_to_dim(data["actions"], self.action_dim)
